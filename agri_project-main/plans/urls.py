@@ -7,6 +7,7 @@ from rest_framework_nested import routers
 
 from .views.auth import LoginView, LogoutView, MeView
 from .views.dashboard import DashboardViewSet
+from .views.users import UserViewSet
 from .views.units import UnitViewSet
 from .views.indicators import IndicatorViewSet
 from .views.annual_plans import AnnualPlanViewSet, AnnualPlanTargetViewSet
@@ -21,6 +22,7 @@ router = DefaultRouter()
 
 # Register main viewsets
 router.register(r'dashboard', DashboardViewSet, basename='dashboard')
+router.register(r'users', UserViewSet, basename='users')
 router.register(r'units', UnitViewSet, basename='units')
 router.register(r'indicators', IndicatorViewSet, basename='indicators')
 router.register(r'annual-plans', AnnualPlanViewSet, basename='annual-plans')

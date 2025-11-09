@@ -39,11 +39,29 @@ class QuarterlyReportViewSet(BaseViewSet):
     def perform_create(self, serializer):
         """Set unit and created_by automatically when creating."""
         profile = get_user_profile(self.request.user)
-        serializer.save(unit=profile.unit, created_by=self.request.user)
+        
+        # For non-superadmin users, always use their profile unit
+        # For superadmin users, use unit_id from request if provided, otherwise use profile unit
+        unit = profile.unit
+        if profile.role == 'SUPERADMIN' and 'unit_id' in self.request.data:
+            unit_id = self.request.data.get('unit_id')
+            try:
+                from ..models import Unit
+                unit = Unit.objects.get(id=unit_id)
+            except Unit.DoesNotExist:
+                pass  # Use profile unit as fallback
+        
+        # Merge unit and created_by into validated_data before saving
+        # This ensures they're available when create() is called
+        if hasattr(serializer, 'validated_data'):
+            serializer.validated_data['unit'] = unit
+            serializer.validated_data['created_by'] = self.request.user
+        
+        serializer.save()
         
         # Log the action
         self.log_action(
-            profile.unit,
+            unit,
             'CREATE',
             context_report=serializer.instance,
             message=f"Created quarterly report for Q{serializer.instance.quarter} {serializer.instance.year}"
@@ -88,7 +106,6 @@ class QuarterlyReportViewSet(BaseViewSet):
         report.save()
         
         self.log_action(
-            request.user,
             report.unit,
             'SUBMIT',
             context_report=report,
@@ -119,7 +136,6 @@ class QuarterlyReportViewSet(BaseViewSet):
         report.save()
         
         self.log_action(
-            request.user,
             report.unit,
             'APPROVE',
             context_report=report,
@@ -148,7 +164,6 @@ class QuarterlyReportViewSet(BaseViewSet):
         report.save()
         
         self.log_action(
-            request.user,
             report.unit,
             'REJECT',
             context_report=report,
@@ -190,7 +205,6 @@ class QuarterlyReportViewSet(BaseViewSet):
                 serializer.save(report=report, indicator=indicator, updated_by=request.user)
                 
                 self.log_action(
-                    request.user,
                     report.unit,
                     'CREATE',
                     context_report=report,
@@ -229,7 +243,6 @@ class QuarterlyReportViewSet(BaseViewSet):
                             approved_count += 1
                             
                             self.log_action(
-                                request.user,
                                 report.unit,
                                 'APPROVE',
                                 context_report=report,
@@ -287,7 +300,6 @@ class QuarterlyIndicatorEntryViewSet(BaseViewSet):
             serializer.save(report=report, updated_by=self.request.user)
             
             self.log_action(
-                self.request.user,
                 report.unit,
                 'CREATE',
                 context_report=report,
@@ -311,7 +323,6 @@ class QuarterlyIndicatorEntryViewSet(BaseViewSet):
         serializer.save(updated_by=self.request.user)
         
         self.log_action(
-            self.request.user,
             report.unit,
             'UPDATE',
             context_report=report,
@@ -329,7 +340,6 @@ class QuarterlyIndicatorEntryViewSet(BaseViewSet):
             return Response({'error': 'Cannot delete entries from submitted/approved reports'}, status=status.HTTP_400_BAD_REQUEST)
         
         self.log_action(
-            self.request.user,
             report.unit,
             'DELETE',
             context_report=report,

@@ -7,6 +7,24 @@ export interface IndicatorFilters {
   includeInactive?: boolean;
 }
 
+export interface CreateIndicatorData {
+  code: string;
+  name: string;
+  description?: string;
+  owner_unit_id: number;
+  unit_of_measure?: string;
+  active?: boolean;
+}
+
+export interface UpdateIndicatorData {
+  code?: string;
+  name?: string;
+  description?: string;
+  owner_unit_id?: number;
+  unit_of_measure?: string;
+  active?: boolean;
+}
+
 export const getIndicators = async (
   filters: IndicatorFilters = {}
 ): Promise<IndicatorSummary[]> => {
@@ -20,4 +38,23 @@ export const getIndicators = async (
   return Array.isArray(data)
     ? data.map((item) => mapIndicatorSummary(item))
     : [];
+};
+
+export const getIndicator = async (id: number): Promise<IndicatorSummary> => {
+  const { data } = await apiClient.get(`/indicators/${id}/`);
+  return mapIndicatorSummary(data);
+};
+
+export const createIndicator = async (indicatorData: CreateIndicatorData): Promise<IndicatorSummary> => {
+  const { data } = await apiClient.post("/indicators/", indicatorData);
+  return mapIndicatorSummary(data);
+};
+
+export const updateIndicator = async (id: number, indicatorData: UpdateIndicatorData): Promise<IndicatorSummary> => {
+  const { data } = await apiClient.put(`/indicators/${id}/`, indicatorData);
+  return mapIndicatorSummary(data);
+};
+
+export const deleteIndicator = async (id: number): Promise<void> => {
+  await apiClient.delete(`/indicators/${id}/`);
 };

@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.db import transaction
 
-from ..models import AnnualPlan, AnnualPlanTarget, Indicator
+from ..models import AnnualPlan, AnnualPlanTarget, Indicator, Unit
 from ..serializers import (
     AnnualPlanSerializer, AnnualPlanListSerializer, AnnualPlanTargetSerializer,
     AnnualPlanValidationSerializer, BulkApproveSerializer, BulkRejectSerializer
@@ -35,11 +35,28 @@ class AnnualPlanViewSet(BaseViewSet):
     def perform_create(self, serializer):
         """Set unit and created_by automatically when creating."""
         profile = get_user_profile(self.request.user)
-        serializer.save(unit=profile.unit, created_by=self.request.user)
+        
+        # For non-superadmin users, always use their profile unit
+        # For superadmin users, use unit_id from request if provided, otherwise use profile unit
+        unit = profile.unit
+        if profile.role == 'SUPERADMIN' and 'unit_id' in self.request.data:
+            unit_id = self.request.data.get('unit_id')
+            try:
+                unit = Unit.objects.get(id=unit_id)
+            except Unit.DoesNotExist:
+                pass  # Use profile unit as fallback
+        
+        # Merge unit and created_by into validated_data before saving
+        # This ensures they're available when create() is called
+        if hasattr(serializer, 'validated_data'):
+            serializer.validated_data['unit'] = unit
+            serializer.validated_data['created_by'] = self.request.user
+        
+        serializer.save()
         
         # Log the action
         self.log_action(
-            profile.unit,
+            unit,
             'CREATE',
             context_plan=serializer.instance,
             message=f"Created annual plan for {serializer.instance.year}"

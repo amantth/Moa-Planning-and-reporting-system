@@ -26,7 +26,13 @@ class IndicatorViewSet(BaseViewSet):
     def perform_create(self, serializer):
         """Set owner_unit automatically when creating."""
         profile = get_user_profile(self.request.user)
-        serializer.save(owner_unit=profile.unit)
+        
+        # Merge owner_unit into validated_data before saving
+        # This ensures it's available when create() is called
+        if hasattr(serializer, 'validated_data'):
+            serializer.validated_data['owner_unit'] = profile.unit
+        
+        serializer.save()
         
         # Log the action
         self.log_action(

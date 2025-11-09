@@ -107,13 +107,16 @@ class IndicatorSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
     
     def create(self, validated_data):
-        owner_unit_id = validated_data.pop('owner_unit_id')
-        owner_unit = Unit.objects.get(id=owner_unit_id)
+        # Handle owner_unit_id if provided (from frontend)
+        # Only convert if owner_unit is not already set by perform_create
+        if 'owner_unit_id' in validated_data and 'owner_unit' not in validated_data:
+            owner_unit_id = validated_data.pop('owner_unit_id')
+            validated_data['owner_unit'] = Unit.objects.get(id=owner_unit_id)
+        elif 'owner_unit_id' in validated_data:
+            # Remove owner_unit_id if owner_unit is already set
+            validated_data.pop('owner_unit_id')
         
-        return Indicator.objects.create(
-            owner_unit=owner_unit,
-            **validated_data
-        )
+        return super().create(validated_data)
     
     def update(self, instance, validated_data):
         if 'owner_unit_id' in validated_data:
@@ -167,9 +170,9 @@ class AnnualPlanTargetSerializer(serializers.ModelSerializer):
 class AnnualPlanSerializer(serializers.ModelSerializer):
     """Annual plan serializer with targets and workflow information."""
     unit = UnitNestedSerializer(read_only=True)
-    unit_id = serializers.IntegerField(write_only=True)
+    unit_id = serializers.IntegerField(write_only=True, required=False)
     created_by = UserSerializer(read_only=True)
-    created_by_id = serializers.IntegerField(write_only=True)
+    created_by_id = serializers.IntegerField(write_only=True, required=False)
     approved_by = UserSerializer(read_only=True)
     targets = AnnualPlanTargetSerializer(many=True, read_only=True)
     targets_count = serializers.SerializerMethodField()
@@ -205,17 +208,25 @@ class AnnualPlanSerializer(serializers.ModelSerializer):
         return obj.is_within_entry_window()
     
     def create(self, validated_data):
-        unit_id = validated_data.pop('unit_id')
-        created_by_id = validated_data.pop('created_by_id')
+        # Handle unit_id if provided (from frontend)
+        # Only convert if unit is not already set by perform_create
+        if 'unit_id' in validated_data and 'unit' not in validated_data:
+            unit_id = validated_data.pop('unit_id')
+            validated_data['unit'] = Unit.objects.get(id=unit_id)
+        elif 'unit_id' in validated_data:
+            # Remove unit_id if unit is already set
+            validated_data.pop('unit_id')
         
-        unit = Unit.objects.get(id=unit_id)
-        created_by = User.objects.get(id=created_by_id)
+        # Handle created_by_id if provided (from frontend)
+        # Only convert if created_by is not already set by perform_create
+        if 'created_by_id' in validated_data and 'created_by' not in validated_data:
+            created_by_id = validated_data.pop('created_by_id')
+            validated_data['created_by'] = User.objects.get(id=created_by_id)
+        elif 'created_by_id' in validated_data:
+            # Remove created_by_id if created_by is already set
+            validated_data.pop('created_by_id')
         
-        return AnnualPlan.objects.create(
-            unit=unit,
-            created_by=created_by,
-            **validated_data
-        )
+        return super().create(validated_data)
     
     def update(self, instance, validated_data):
         if 'unit_id' in validated_data:
@@ -293,9 +304,9 @@ class QuarterlyIndicatorEntrySerializer(serializers.ModelSerializer):
 class QuarterlyReportSerializer(serializers.ModelSerializer):
     """Quarterly report serializer with entries and workflow information."""
     unit = UnitNestedSerializer(read_only=True)
-    unit_id = serializers.IntegerField(write_only=True)
+    unit_id = serializers.IntegerField(write_only=True, required=False)
     created_by = UserSerializer(read_only=True)
-    created_by_id = serializers.IntegerField(write_only=True)
+    created_by_id = serializers.IntegerField(write_only=True, required=False)
     approved_by = UserSerializer(read_only=True)
     entries = QuarterlyIndicatorEntrySerializer(many=True, read_only=True)
     entries_count = serializers.SerializerMethodField()
@@ -332,17 +343,25 @@ class QuarterlyReportSerializer(serializers.ModelSerializer):
         return obj.is_within_entry_window()
     
     def create(self, validated_data):
-        unit_id = validated_data.pop('unit_id')
-        created_by_id = validated_data.pop('created_by_id')
+        # Handle unit_id if provided (from frontend)
+        # Only convert if unit is not already set by perform_create
+        if 'unit_id' in validated_data and 'unit' not in validated_data:
+            unit_id = validated_data.pop('unit_id')
+            validated_data['unit'] = Unit.objects.get(id=unit_id)
+        elif 'unit_id' in validated_data:
+            # Remove unit_id if unit is already set
+            validated_data.pop('unit_id')
         
-        unit = Unit.objects.get(id=unit_id)
-        created_by = User.objects.get(id=created_by_id)
+        # Handle created_by_id if provided (from frontend)
+        # Only convert if created_by is not already set by perform_create
+        if 'created_by_id' in validated_data and 'created_by' not in validated_data:
+            created_by_id = validated_data.pop('created_by_id')
+            validated_data['created_by'] = User.objects.get(id=created_by_id)
+        elif 'created_by_id' in validated_data:
+            # Remove created_by_id if created_by is already set
+            validated_data.pop('created_by_id')
         
-        return QuarterlyReport.objects.create(
-            unit=unit,
-            created_by=created_by,
-            **validated_data
-        )
+        return super().create(validated_data)
     
     def update(self, instance, validated_data):
         if 'unit_id' in validated_data:

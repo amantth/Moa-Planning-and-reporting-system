@@ -10,7 +10,7 @@ import csv
 
 from ..models import ImportBatch, AnnualPlan, QuarterlyReport, Indicator, WorkflowAudit, Unit
 from ..serializers import ImportBatchSerializer
-from .base import BaseViewSet, get_user_profile
+from .base import BaseViewSet, get_user_profile, can_user_access_unit
 
 
 class ImportExportViewSet(BaseViewSet):
@@ -32,12 +32,74 @@ class ImportExportViewSet(BaseViewSet):
         """Handle Excel import for plans and reports."""
         profile = get_user_profile(request.user)
         
-        # This would integrate with your Excel processing logic
-        # For now, return a placeholder response
+        if 'file' not in request.FILES:
+            return Response(
+                {'error': 'No file provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        file = request.FILES['file']
+        source = request.data.get('source', 'ANNUAL')
+        unit_id = request.data.get('unit_id')
+        year = request.data.get('year')
+        quarter = request.data.get('quarter')
+        
+        if not all([unit_id, year]):
+            return Response(
+                {'error': 'Missing required fields: unit_id, year'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if source == 'QUARTERLY' and not quarter:
+            return Response(
+                {'error': 'Quarter is required for quarterly reports'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            unit = Unit.objects.get(id=unit_id)
+            if not can_user_access_unit(request.user, unit):
+                return Response(
+                    {'error': 'Permission denied'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except Unit.DoesNotExist:
+            return Response(
+                {'error': 'Invalid unit_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create import batch record
+        import_batch = ImportBatch.objects.create(
+            source=source,
+            file=file,
+            unit=unit,
+            year=int(year),
+            quarter=int(quarter) if quarter else None,
+            uploaded_by=request.user,
+            notes=f'Uploaded via web interface'
+        )
+        
+        # Basic file validation - actual processing would go here
+        # For now, we'll just record the upload
+        import_batch.records_inserted = 0
+        import_batch.records_updated = 0
+        import_batch.save()
+        
+        # Log the action
+        from .base import log_workflow_action
+        log_workflow_action(
+            request.user,
+            unit,
+            'IMPORT',
+            message=f"Uploaded {source} data for year {year}"
+        )
+        
         return Response({
-            'message': 'Import functionality will be implemented based on your Excel processing requirements.',
-            'status': 'pending'
-        })
+            'message': 'File uploaded successfully. Processing will be implemented.',
+            'batch_id': import_batch.id,
+            'status': 'uploaded'
+        }, status=status.HTTP_201_CREATED)
     
     @action(detail=False, methods=['get'])
     def export_options(self, request):

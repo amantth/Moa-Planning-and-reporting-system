@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
-import { getIndicators } from "@/services/indicators-service";
+import { getIndicators, createIndicator, updateIndicator, deleteIndicator, CreateIndicatorData } from "@/services/indicators-service";
 import { getUnits } from "@/services/units-service";
 import {
   Table,
@@ -12,7 +12,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -29,12 +39,26 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { Plus, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 const Indicators = () => {
   const { session, checking } = useAuthGuard();
+  const queryClient = useQueryClient();
   const [unitFilter, setUnitFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [editingIndicator, setEditingIndicator] = useState<any>(null);
+  const [formData, setFormData] = useState<CreateIndicatorData>({
+    code: "",
+    name: "",
+    description: "",
+    owner_unit_id: 0,
+    unit_of_measure: "",
+    active: true,
+  });
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 400);
@@ -60,6 +84,77 @@ const Indicators = () => {
       }),
     enabled: !checking && !!session,
   });
+
+  const createMutation = useMutation({
+    mutationFn: createIndicator,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["indicators"] });
+      setIsCreateDialogOpen(false);
+      setFormData({
+        code: "",
+        name: "",
+        description: "",
+        owner_unit_id: 0,
+        unit_of_measure: "",
+        active: true,
+      });
+      toast.success("Indicator created successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || "Failed to create indicator");
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<CreateIndicatorData> }) =>
+      updateIndicator(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["indicators"] });
+      setEditingIndicator(null);
+      toast.success("Indicator updated successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || "Failed to update indicator");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteIndicator,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["indicators"] });
+      toast.success("Indicator deleted successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || "Failed to delete indicator");
+    },
+  });
+
+  const handleCreate = () => {
+    if (!formData.code || !formData.name || !formData.owner_unit_id) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+    createMutation.mutate(formData);
+  };
+
+  const handleEdit = (indicator: any) => {
+    setEditingIndicator(indicator);
+    setFormData({
+      code: indicator.code,
+      name: indicator.name,
+      description: indicator.description || "",
+      owner_unit_id: indicator.ownerUnit.id,
+      unit_of_measure: indicator.unitOfMeasure || "",
+      active: indicator.active,
+    });
+  };
+
+  const handleUpdate = () => {
+    if (!editingIndicator) return;
+    updateMutation.mutate({ id: editingIndicator.id, data: formData });
+  };
+
+  const canCreateIndicators = !!session?.user;
 
   return (
     <DashboardLayout>
@@ -91,6 +186,12 @@ const Indicators = () => {
                 ))}
               </SelectContent>
             </Select>
+            {canCreateIndicators && (
+              <Button onClick={() => setIsCreateDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Indicator
+              </Button>
+            )}
           </div>
         </div>
 
@@ -119,6 +220,7 @@ const Indicators = () => {
                     <TableHead>Unit</TableHead>
                     <TableHead>Owner</TableHead>
                     <TableHead>Status</TableHead>
+                    {canCreateIndicators && <TableHead>Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -140,12 +242,36 @@ const Indicators = () => {
                             {indicator.active ? "Active" : "Inactive"}
                           </Badge>
                         </TableCell>
+                        {canCreateIndicators && (
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEdit(indicator)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  if (confirm("Are you sure you want to delete this indicator?")) {
+                                    deleteMutation.mutate(indicator.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))
                   ) : (
                     <TableRow>
                       <TableCell
-                        colSpan={5}
+                        colSpan={canCreateIndicators ? 6 : 5}
                         className="py-10 text-center text-muted-foreground"
                       >
                         No indicators match the selected filters.
@@ -163,6 +289,160 @@ const Indicators = () => {
             ) : null}
           </CardContent>
         </Card>
+
+        {/* Create Indicator Dialog */}
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Create New Indicator</DialogTitle>
+              <DialogDescription>
+                Create a new key performance indicator.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="code">Code *</Label>
+                <Input
+                  id="code"
+                  value={formData.code}
+                  onChange={(e) =>
+                    setFormData({ ...formData, code: e.target.value })
+                  }
+                  placeholder="e.g., IND-001"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="name">Name *</Label>
+                <Input
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  value={formData.description}
+                  onChange={(e) =>
+                    setFormData({ ...formData, description: e.target.value })
+                  }
+                  rows={3}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="owner_unit_id">Owner Unit *</Label>
+                <Select
+                  value={String(formData.owner_unit_id)}
+                  onValueChange={(value) =>
+                    setFormData({ ...formData, owner_unit_id: Number(value) })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select owner unit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {unitsQuery.data?.map((unit) => (
+                      <SelectItem key={unit.id} value={String(unit.id)}>
+                        {unit.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="unit_of_measure">Unit of Measure</Label>
+                <Input
+                  id="unit_of_measure"
+                  value={formData.unit_of_measure}
+                  onChange={(e) =>
+                    setFormData({ ...formData, unit_of_measure: e.target.value })
+                  }
+                  placeholder="e.g., Percentage, Number, etc."
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setIsCreateDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleCreate} disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Creating..." : "Create Indicator"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Indicator Dialog */}
+        <Dialog open={!!editingIndicator} onOpenChange={() => setEditingIndicator(null)}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Edit Indicator</DialogTitle>
+              <DialogDescription>
+                Update indicator information.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit_code">Code *</Label>
+                <Input
+                  id="edit_code"
+                  value={formData.code}
+                  onChange={(e) =>
+                    setFormData({ ...formData, code: e.target.value })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit_name">Name *</Label>
+                <Input
+                  id="edit_name"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit_description">Description</Label>
+                <Textarea
+                  id="edit_description"
+                  value={formData.description}
+                  onChange={(e) =>
+                    setFormData({ ...formData, description: e.target.value })
+                  }
+                  rows={3}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit_unit_of_measure">Unit of Measure</Label>
+                <Input
+                  id="edit_unit_of_measure"
+                  value={formData.unit_of_measure}
+                  onChange={(e) =>
+                    setFormData({ ...formData, unit_of_measure: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditingIndicator(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUpdate}
+                disabled={updateMutation.isPending}
+              >
+                {updateMutation.isPending ? "Updating..." : "Update Indicator"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-$=0tv*l&ztb6zsj350j%*plf2qur5fll((q5j6-#td8wm9j5ju
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '::1']
 
 
 # Application definition
@@ -40,12 +40,14 @@ INSTALLED_APPS = [
     'plans',
     'rest_framework',
     'rest_framework.authtoken',
+    'corsheaders',
 ]
 
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -86,16 +88,24 @@ WSGI_APPLICATION = 'moa_agriplan_system.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+# Uncomment below to use PostgreSQL instead of SQLite
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'moa_agriplan_system',
-        'USER': 'lydia_user',
-        'PASSWORD': 'Mamiabigia@9',
-        'HOST': 'localhost',
-        'PORT': '5432',
-    }
-}
+         'ENGINE': 'django.db.backends.postgresql',
+         'NAME': 'agri_db',
+         'USER': 'aman',
+         'PASSWORD': 'ETHAMANT1',
+         'HOST': 'localhost',
+         'PORT': '5432',
+     }
+ }
 
 
 # Password validation
@@ -133,6 +143,29 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Media files (user uploads)
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# CORS settings
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+# CSRF settings for development
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
