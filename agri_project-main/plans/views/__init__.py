@@ -14,6 +14,9 @@ from .dashboard import DashboardViewSet
 # Unit management views
 from .units import UnitViewSet 
 
+# User management views
+from .users import UserViewSet
+
 # Indicator management views
 from .indicators import IndicatorViewSet
 

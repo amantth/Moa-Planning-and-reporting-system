@@ -38,7 +38,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Annual Plans", href: "/plans", icon: FileText },
-    { name: "Performance Reports", href: "/reports", icon: TrendingUp },
+    { name: "Quarterly Reports", href: "/reports", icon: TrendingUp },
+    { name: "Performance Report", href: "/performance-report", icon: TrendingUp },
     { name: "Indicators", href: "/indicators", icon: Target },
     { name: "Users", href: "/users", icon: Users },
     { name: "Offices", href: "/offices", icon: Building2 },

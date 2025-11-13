@@ -11,7 +11,7 @@ class Unit(models.Model):
     ]
     name = models.CharField(max_length=200, unique=True)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
-    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='children')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children')
 
     class Meta:
         ordering = ['type', 'name']
@@ -30,7 +30,7 @@ class UserProfile(models.Model):
     ]
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
-    unit = models.ForeignKey(Unit, on_delete=models.PROTECT, related_name='users')
+    unit = models.ForeignKey(Unit, on_delete=models.SET_NULL, null=True, blank=True, related_name='users')
 
     def __str__(self):
         return f'{self.user.username} ({self.role})'
@@ -202,6 +202,7 @@ class WorkflowAudit(models.Model):
         ('REJECT', 'Reject'),
         ('IMPORT', 'Import'),
         ('UPDATE', 'Update'),
+        ('DELETE', 'Delete'),
     ]
     actor = models.ForeignKey(User, on_delete=models.PROTECT, related_name='wf_actions')
     unit = models.ForeignKey(Unit, on_delete=models.PROTECT, related_name='wf_logs')

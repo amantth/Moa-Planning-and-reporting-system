@@ -56,5 +56,12 @@ export const updateIndicator = async (id: number, indicatorData: UpdateIndicator
 };
 
 export const deleteIndicator = async (id: number): Promise<void> => {
-  await apiClient.delete(`/indicators/${id}/`);
+  try {
+    const response = await apiClient.delete(`/indicators/${id}/`);
+    console.log("Delete indicator response:", response);
+    return response.data;
+  } catch (error) {
+    console.error("Delete indicator service error:", error);
+    throw error;
+  }
 };

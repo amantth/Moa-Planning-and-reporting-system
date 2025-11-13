@@ -79,6 +79,65 @@ export const rejectAnnualPlan = async (id: number): Promise<any> => {
 };
 
 export const addAnnualPlanTarget = async (planId: number, targetData: CreateAnnualPlanTargetData): Promise<any> => {
-  const { data } = await apiClient.post(`/annual-plans/${planId}/add_target/`, targetData);
-  return data;
+  try {
+    console.log("Adding target to plan:", planId, "with data:", targetData);
+    
+    // Try multiple endpoints in sequence
+    const endpoints = [
+      `/annual-plans/${planId}/add_target/`,
+      `/annual-plans/${planId}/targets/`,
+      `/plans/${planId}/add-target/`,
+      `/plans/${planId}/targets/`,
+      `/annual-plans/${planId}/add-target`,  // without trailing slash
+      `/plans/${planId}/add_target/`,
+    ];
+    
+    let lastError;
+    let attemptedEndpoints = [];
+    
+    for (const endpoint of endpoints) {
+      try {
+        console.log("Trying add target endpoint:", endpoint);
+        const response = await apiClient.post(endpoint, targetData);
+        console.log("Add target successful with endpoint:", endpoint);
+        return response.data;
+      } catch (error: any) {
+        console.log(`Endpoint ${endpoint} failed with status:`, error.response?.status);
+        console.log(`Error details:`, error.response?.data);
+        lastError = error;
+        attemptedEndpoints.push(`${endpoint} (${error.response?.status || 'network error'})`);
+        
+        // Continue trying other endpoints unless it's a permission error
+        if (error.response?.status === 403 || error.response?.status === 401) {
+          throw error;
+        }
+      }
+    }
+    
+    // If all endpoints failed, create a comprehensive error
+    console.log("All add target endpoints failed:", attemptedEndpoints);
+    
+    // Check if the error is a server crash (HTML response)
+    if (lastError?.response?.data && typeof lastError.response.data === 'string' && 
+        lastError.response.data.includes('<!DOCTYPE html>')) {
+      const serverError = new Error(
+        `Server error occurred while adding target. The backend returned an HTML error page instead of JSON. ` +
+        `This indicates a server-side crash or configuration issue. Please check the server logs and contact your administrator.`
+      );
+      serverError.name = 'ServerCrashError';
+      throw serverError;
+    }
+    
+    // Create a comprehensive error with details about all attempts
+    const comprehensiveError = new Error(
+      `Failed to add target. Attempted endpoints: ${attemptedEndpoints.join(', ')}. ` +
+      `The backend may not have the correct API endpoints for adding targets.`
+    );
+    comprehensiveError.name = 'AllTargetEndpointsFailed';
+    throw comprehensiveError;
+    
+  } catch (error) {
+    console.error("Add target service error:", error);
+    throw error;
+  }
 };

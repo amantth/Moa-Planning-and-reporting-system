@@ -39,7 +39,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 
 const roleLabels: Record<string, string> = {
@@ -93,7 +93,13 @@ const Users = () => {
       toast.success("User created successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to create user");
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.detail ||
+                          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+                          error.message || 
+                          "Failed to create user";
+      toast.error(errorMessage);
+      console.error("Create user error:", error.response?.data || error);
     },
   });
 
@@ -103,41 +109,74 @@ const Users = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       setEditingUser(null);
+      setFormData({
+        username: "",
+        email: "",
+        password: "",
+        first_name: "",
+        last_name: "",
+        role: "STATE_MINISTER",
+        unit_id: 0,
+      });
       toast.success("User updated successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to update user");
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.detail ||
+                          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+                          error.message || 
+                          "Failed to update user";
+      toast.error(errorMessage);
+      console.error("Update user error:", error.response?.data || error);
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: deleteUser,
-    onSuccess: () => {
+  const toggleUserStatusMutation = useMutation({
+    mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) =>
+      updateUser(userId, { is_active: isActive }),
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast.success("User deactivated successfully");
+      const action = variables.isActive ? "activated" : "deactivated";
+      toast.success(`User ${action} successfully`);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to delete user");
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.detail ||
+                          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+                          error.message || 
+                          "Failed to update user status";
+      toast.error(errorMessage);
+      console.error("Toggle user status error:", error.response?.data || error);
     },
   });
 
   const handleCreate = () => {
-    if (!formData.username || !formData.email || !formData.password || !formData.unit_id) {
-      toast.error("Please fill in all required fields");
+    if (!formData.username || !formData.email || !formData.password || !formData.unit_id || formData.unit_id === 0) {
+      toast.error("Please fill in all required fields (username, email, password, and unit)");
       return;
     }
     createMutation.mutate(formData);
   };
 
   const handleUpdate = (user: any) => {
-    const updateData: UpdateUserData = {
-      first_name: formData.first_name,
-      last_name: formData.last_name,
-      email: formData.email,
-    };
-    if (formData.password) {
-      updateData.password = formData.password;
+    if (!editingUser) return;
+    
+    if (!formData.email || !formData.email.trim()) {
+      toast.error("Email is required");
+      return;
     }
+    
+    const updateData: UpdateUserData = {
+      first_name: formData.first_name || undefined,
+      last_name: formData.last_name || undefined,
+      email: formData.email.trim(),
+    };
+    
+    // Only include password if it's provided and not empty
+    if (formData.password && formData.password.trim()) {
+      updateData.password = formData.password.trim();
+    }
+    
     updateMutation.mutate({ id: user.user.id, data: updateData });
   };
 
@@ -152,6 +191,19 @@ const Users = () => {
       role: user.profile?.role || "STATE_MINISTER",
       unit_id: user.profile?.unit?.id || 0,
     });
+  };
+
+  const handleToggleUserStatus = (user: any) => {
+    const newStatus = !user.user.isActive;
+    const action = newStatus ? "activate" : "deactivate";
+    const confirmMessage = `Are you sure you want to ${action} this user?`;
+    
+    if (confirm(confirmMessage)) {
+      toggleUserStatusMutation.mutate({
+        userId: user.user.id,
+        isActive: newStatus,
+      });
+    }
   };
 
   const canCreateUsers = session?.user?.role === "SUPERADMIN" || session?.user?.role === "STRATEGIC_AFFAIRS";
@@ -236,13 +288,15 @@ const Users = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
-                                  if (confirm("Are you sure you want to deactivate this user?")) {
-                                    deleteMutation.mutate(user.user.id);
-                                  }
-                                }}
+                                onClick={() => handleToggleUserStatus(user)}
+                                disabled={toggleUserStatusMutation.isPending}
+                                title={user.user.isActive ? "Deactivate User" : "Activate User"}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                {user.user.isActive ? (
+                                  <UserX className="h-4 w-4 text-red-600" />
+                                ) : (
+                                  <UserCheck className="h-4 w-4 text-green-600" />
+                                )}
                               </Button>
                             )}
                           </div>

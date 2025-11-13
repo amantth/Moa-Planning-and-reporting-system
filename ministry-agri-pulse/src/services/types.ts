@@ -71,10 +71,10 @@ export interface QuarterlyReportSummary {
 export interface DashboardStats {
   totalUnits: number;
   totalIndicators: number;
-  annualPlansCurrent: number;
-  quarterlyReportsCurrent: number;
+  submittedPlans: number;
+  approvedPlans: number;
   pendingApprovals: number;
-  recentActivitiesCount: number;
+  performanceReports: number;
 }
 
 export interface PerformanceSummary {
@@ -172,14 +172,14 @@ export const mapWorkflowAuditEntry = (payload: any): WorkflowAuditEntry => ({
 export const mapDashboardStats = (payload: any): DashboardStats => ({
   totalUnits: payload?.total_units ?? 0,
   totalIndicators: payload?.total_indicators ?? 0,
-  annualPlansCurrent: payload?.annual_plans_current ?? 0,
-  quarterlyReportsCurrent: payload?.quarterly_reports_current ?? 0,
-  pendingApprovals: payload?.pending_approvals ?? 0,
-  recentActivitiesCount: payload?.recent_activities_count ?? 0,
+  submittedPlans: payload?.submitted_plans ?? payload?.annual_plans_submitted ?? 0,
+  approvedPlans: payload?.approved_plans ?? payload?.annual_plans_approved ?? 0,
+  pendingApprovals: payload?.pending_approvals ?? payload?.plans_pending_approval ?? 0,
+  performanceReports: payload?.performance_reports ?? payload?.quarterly_reports_current ?? 0,
 });
 
 export const mapPerformanceSummary = (payload: any): PerformanceSummary => ({
-  year: Number(payload?.year) ?? 0,
+  year: Number(payload?.year || 0),
   totalPlans: payload?.total_plans ?? 0,
   approvedPlans: payload?.approved_plans ?? 0,
   totalReports: payload?.total_reports ?? 0,

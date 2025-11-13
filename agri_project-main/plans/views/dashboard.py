@@ -43,13 +43,6 @@ class DashboardViewSet(BaseViewSet):
                 quarter=current_quarter,
                 unit__in=accessible_units
             ).count(),
-            'pending_approvals': AnnualPlan.objects.filter(
-                status='SUBMITTED',
-                unit__in=accessible_units
-            ).count(),
-            'recent_activities_count': WorkflowAudit.objects.filter(
-                unit__in=accessible_units
-            ).count(),
         }
         
         serializer = DashboardStatsSerializer(stats)

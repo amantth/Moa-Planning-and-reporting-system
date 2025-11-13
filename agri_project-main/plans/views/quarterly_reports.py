@@ -39,29 +39,11 @@ class QuarterlyReportViewSet(BaseViewSet):
     def perform_create(self, serializer):
         """Set unit and created_by automatically when creating."""
         profile = get_user_profile(self.request.user)
-        
-        # For non-superadmin users, always use their profile unit
-        # For superadmin users, use unit_id from request if provided, otherwise use profile unit
-        unit = profile.unit
-        if profile.role == 'SUPERADMIN' and 'unit_id' in self.request.data:
-            unit_id = self.request.data.get('unit_id')
-            try:
-                from ..models import Unit
-                unit = Unit.objects.get(id=unit_id)
-            except Unit.DoesNotExist:
-                pass  # Use profile unit as fallback
-        
-        # Merge unit and created_by into validated_data before saving
-        # This ensures they're available when create() is called
-        if hasattr(serializer, 'validated_data'):
-            serializer.validated_data['unit'] = unit
-            serializer.validated_data['created_by'] = self.request.user
-        
-        serializer.save()
+        serializer.save(unit=profile.unit, created_by=self.request.user)
         
         # Log the action
         self.log_action(
-            unit,
+            profile.unit,
             'CREATE',
             context_report=serializer.instance,
             message=f"Created quarterly report for Q{serializer.instance.quarter} {serializer.instance.year}"
@@ -91,27 +73,27 @@ class QuarterlyReportViewSet(BaseViewSet):
     def submit(self, request, pk=None):
         """Submit quarterly report for approval."""
         report = self.get_object()
-        
+
         if not can_user_access_unit(request.user, report.unit):
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-        
+
         if report.status != 'DRAFT':
             return Response({'error': 'Only draft reports can be submitted'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if not report.entries.exists():
             return Response({'error': 'Cannot submit report without entries'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         report.status = 'SUBMITTED'
         report.submitted_at = timezone.now()
         report.save()
-        
+
         self.log_action(
             report.unit,
             'SUBMIT',
             context_report=report,
             message=f"Submitted quarterly report for Q{report.quarter} {report.year}"
         )
-        
+
         serializer = self.get_serializer(report)
         return Response(serializer.data)
     
@@ -120,28 +102,28 @@ class QuarterlyReportViewSet(BaseViewSet):
         """Approve quarterly report."""
         report = self.get_object()
         profile = get_user_profile(request.user)
-        
+
         if not can_user_access_unit(request.user, report.unit):
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-        
+
         if profile.role not in ['SUPERADMIN', 'STRATEGIC_AFFAIRS']:
             return Response({'error': 'Insufficient permissions'}, status=status.HTTP_403_FORBIDDEN)
-        
+
         if report.status != 'SUBMITTED':
             return Response({'error': 'Only submitted reports can be approved'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         report.status = 'APPROVED'
         report.approved_by = request.user
         report.approved_at = timezone.now()
         report.save()
-        
+
         self.log_action(
             report.unit,
             'APPROVE',
             context_report=report,
             message=f"Approved quarterly report for Q{report.quarter} {report.year}"
         )
-        
+
         serializer = self.get_serializer(report)
         return Response(serializer.data)
     
@@ -150,26 +132,26 @@ class QuarterlyReportViewSet(BaseViewSet):
         """Reject quarterly report."""
         report = self.get_object()
         profile = get_user_profile(request.user)
-        
+
         if not can_user_access_unit(request.user, report.unit):
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-        
+
         if profile.role not in ['SUPERADMIN', 'STRATEGIC_AFFAIRS']:
             return Response({'error': 'Insufficient permissions'}, status=status.HTTP_403_FORBIDDEN)
-        
+
         if report.status != 'SUBMITTED':
             return Response({'error': 'Only submitted reports can be rejected'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         report.status = 'REJECTED'
         report.save()
-        
+
         self.log_action(
             report.unit,
             'REJECT',
             context_report=report,
             message=f"Rejected quarterly report for Q{report.quarter} {report.year}"
         )
-        
+
         serializer = self.get_serializer(report)
         return Response(serializer.data)
     
@@ -203,7 +185,7 @@ class QuarterlyReportViewSet(BaseViewSet):
             try:
                 indicator = Indicator.objects.get(id=indicator_id, owner_unit=report.unit)
                 serializer.save(report=report, indicator=indicator, updated_by=request.user)
-                
+
                 self.log_action(
                     report.unit,
                     'CREATE',
@@ -241,7 +223,7 @@ class QuarterlyReportViewSet(BaseViewSet):
                             report.approved_at = timezone.now()
                             report.save()
                             approved_count += 1
-                            
+
                             self.log_action(
                                 report.unit,
                                 'APPROVE',
@@ -285,20 +267,22 @@ class QuarterlyIndicatorEntryViewSet(BaseViewSet):
     
     def perform_create(self, serializer):
         """Create entry with validation."""
+        from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound
+        
         report_id = self.request.data.get('report_id')
         if not report_id:
-            return Response({'error': 'report_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({'report_id': 'report_id is required'})
         
         try:
             report = QuarterlyReport.objects.get(id=report_id)
             if not can_user_access_unit(self.request.user, report.unit):
-                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+                raise PermissionDenied('Permission denied')
             
             if report.status != 'DRAFT':
-                return Response({'error': 'Cannot add entries to submitted/approved reports'}, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError({'error': 'Cannot add entries to submitted/approved reports'})
             
             serializer.save(report=report, updated_by=self.request.user)
-            
+
             self.log_action(
                 report.unit,
                 'CREATE',
@@ -307,21 +291,23 @@ class QuarterlyIndicatorEntryViewSet(BaseViewSet):
             )
             
         except QuarterlyReport.DoesNotExist:
-            return Response({'error': 'Report not found'}, status=status.HTTP_404_NOT_FOUND)
+            raise NotFound('Report not found')
     
     def perform_update(self, serializer):
         """Update entry with validation."""
+        from rest_framework.exceptions import ValidationError, PermissionDenied
+        
         entry = self.get_object()
         report = entry.report
         
         if not can_user_access_unit(self.request.user, report.unit):
-            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            raise PermissionDenied('Permission denied')
         
         if report.status != 'DRAFT':
-            return Response({'error': 'Cannot modify entries in submitted/approved reports'}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({'error': 'Cannot modify entries in submitted/approved reports'})
         
         serializer.save(updated_by=self.request.user)
-        
+
         self.log_action(
             report.unit,
             'UPDATE',
@@ -341,9 +327,9 @@ class QuarterlyIndicatorEntryViewSet(BaseViewSet):
         
         self.log_action(
             report.unit,
-            'DELETE',
+            'UPDATE',
             context_report=report,
             message=f"Deleted entry for indicator {instance.indicator.code}"
         )
-        
+
         instance.delete()

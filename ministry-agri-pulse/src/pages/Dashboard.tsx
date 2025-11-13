@@ -6,8 +6,8 @@ import {
 } from "@/services/dashboard-service";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import DashboardStats from "@/components/dashboard/DashboardStats";
-import RecentActivity from "@/components/dashboard/RecentActivity";
 import PendingApprovals from "@/components/dashboard/PendingApprovals";
+import RecentActivity from "@/components/dashboard/RecentActivity";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 
@@ -27,7 +27,7 @@ const Dashboard = () => {
   });
 
   const recentActivityQuery = useQuery({
-    queryKey: ["dashboard", "recent-activity"],
+    queryKey: ["dashboard", "recent-activities"],
     queryFn: getRecentActivities,
     enabled: !checking && !!session,
   });
@@ -66,20 +66,19 @@ const Dashboard = () => {
           isLoading={statsQuery.isLoading}
         />
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-8 md:grid-cols-2">
           <PendingApprovals
             items={pendingApprovalsQuery.data}
             isLoading={pendingApprovalsQuery.isLoading}
           />
+
           <RecentActivity
             items={recentActivityQuery.data}
             isLoading={recentActivityQuery.isLoading}
           />
         </div>
 
-        {statsQuery.error ||
-        pendingApprovalsQuery.error ||
-        recentActivityQuery.error ? (
+        {statsQuery.error || pendingApprovalsQuery.error || recentActivityQuery.error ? (
           <Card>
             <CardContent className="py-6 text-sm text-destructive">
               There was a problem loading some dashboard data. Please refresh

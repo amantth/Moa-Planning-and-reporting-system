@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        button { padding: 10px 20px; margin: 10px 0; font-size: 16px; cursor: pointer; }
+        .result { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 5px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        input, select { padding: 8px; margin: 5px 0; width: 300px; font-size: 14px; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Simple API Test</h1>
+    
+    <div>
+        <label>Auth Token:</label>
+        <input type="text" id="token" placeholder="Paste your token here" style="width: 500px;">
+        <button onclick="getTokenFromStorage()">Get from LocalStorage</button>
+    </div>
+
+    <hr>
+
+    <h2>Test 1: Get Units</h2>
+    <button onclick="testGetUnits()">Test GET /api/units/</button>
+    <div id="result1" class="result"></div>
+
+    <hr>
+
+    <h2>Test 2: Create Office</h2>
+    <label>Office Name:</label>
+    <input type="text" id="officeName" value="Test Office">
+    
+    <label>Office Type:</label>
+    <select id="officeType">
+        <option value="STRATEGIC">Strategic Affairs Office</option>
+        <option value="STATE_MINISTER">State Minister Office</option>
+        <option value="ADVISOR">State Minister Advisor Office</option>
+    </select>
+    
+    <button onclick="testCreateOffice()">Test POST /api/units/</button>
+    <div id="result2" class="result"></div>
+
+    <hr>
+
+    <h2>Test 3: Get Import/Export</h2>
+    <button onclick="testImportExport()">Test GET /api/import-export/</button>
+    <div id="result3" class="result"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api';
+
+        function getTokenFromStorage() {
+            const token = localStorage.getItem('agri_app_auth_token');
+            if (token) {
+                document.getElementById('token').value = token;
+                showResult('result1', 'Token found: ' + token.substring(0, 20) + '...', 'success');
+            } else {
+                showResult('result1', 'No token found in localStorage. Please login first.', 'error');
+            }
+        }
+
+        function getToken() {
+            return document.getElementById('token').value;
+        }
+
+        function showResult(elementId, message, type = '') {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = 'result ' + type;
+        }
+
+        async function testGetUnits() {
+            const token = getToken();
+            if (!token) {
+                showResult('result1', 'Please enter a token first', 'error');
+                return;
+            }
+
+            showResult('result1', 'Loading...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/units/`, {
+                    headers: {
+                        'Authorization': `Token ${token}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('result1', 
+                        `✅ Success! Found ${Array.isArray(data) ? data.length : 0} units\n\n` +
+                        JSON.stringify(data, null, 2), 
+                        'success'
+                    );
+                } else {
+                    showResult('result1', 
+                        `❌ Error ${response.status}: ${response.statusText}\n\n` +
+                        JSON.stringify(data, null, 2), 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('result1', `❌ Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testCreateOffice() {
+            const token = getToken();
+            if (!token) {
+                showResult('result2', 'Please enter a token first', 'error');
+                return;
+            }
+
+            const name = document.getElementById('officeName').value;
+            const type = document.getElementById('officeType').value;
+
+            if (!name) {
+                showResult('result2', 'Please enter an office name', 'error');
+                return;
+            }
+
+            showResult('result2', 'Creating...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/units/`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Token ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: name + ' ' + Date.now(),
+                        type: type,
+                        parent: null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('result2', 
+                        `✅ Success! Office created\n\n` +
+                        JSON.stringify(data, null, 2), 
+                        'success'
+                    );
+                } else {
+                    showResult('result2', 
+                        `❌ Error ${response.status}: ${response.statusText}\n\n` +
+                        JSON.stringify(data, null, 2), 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('result2', `❌ Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testImportExport() {
+            const token = getToken();
+            if (!token) {
+                showResult('result3', 'Please enter a token first', 'error');
+                return;
+            }
+
+            showResult('result3', 'Loading...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/import-export/`, {
+                    headers: {
+                        'Authorization': `Token ${token}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('result3', 
+                        `✅ Success!\n\n` +
+                        JSON.stringify(data, null, 2), 
+                        'success'
+                    );
+                } else {
+                    showResult('result3', 
+                        `❌ Error ${response.status}: ${response.statusText}\n\n` +
+                        JSON.stringify(data, null, 2), 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('result3', `❌ Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto-load token on page load
+        window.onload = function() {
+            getTokenFromStorage();
+        };
+    </script>
+</body>
+</html>

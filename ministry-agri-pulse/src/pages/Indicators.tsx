@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
-import { getIndicators, createIndicator, updateIndicator, deleteIndicator, CreateIndicatorData } from "@/services/indicators-service";
+import {
+  getIndicators,
+  createIndicator,
+  updateIndicator,
+  deleteIndicator,
+  CreateIndicatorData,
+} from "@/services/indicators-service";
 import { getUnits } from "@/services/units-service";
 import {
   Table,
@@ -42,6 +48,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
+import { checkIndicatorUsage } from "@/services/validation-service";
 
 const Indicators = () => {
   const { session, checking } = useAuthGuard();
@@ -51,6 +59,10 @@ const Indicators = () => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingIndicator, setEditingIndicator] = useState<any>(null);
+  const [deletingIndicator, setDeletingIndicator] = useState<any>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDependencies, setDeleteDependencies] = useState<string[]>([]);
+  const [checkingUsage, setCheckingUsage] = useState(false);
   const [formData, setFormData] = useState<CreateIndicatorData>({
     code: "",
     name: "",
@@ -101,13 +113,25 @@ const Indicators = () => {
       toast.success("Indicator created successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to create indicator");
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.detail ||
+                          (error.response?.data?.code && error.response.data.code[0]) ||
+                          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+                          error.message || 
+                          "Failed to create indicator";
+      toast.error(errorMessage);
+      console.error("Create indicator error:", error.response?.data || error);
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<CreateIndicatorData> }) =>
-      updateIndicator(id, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: Partial<CreateIndicatorData>;
+    }) => updateIndicator(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["indicators"] });
       setEditingIndicator(null);
@@ -125,13 +149,40 @@ const Indicators = () => {
       toast.success("Indicator deleted successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to delete indicator");
+      console.error("Delete indicator error:", error);
+      console.error("Error response:", error.response);
+      console.error("Error status:", error.response?.status);
+      console.error("Error data:", error.response?.data);
+      
+      let errorMessage = "Failed to delete indicator";
+      
+      if (error.response?.status === 403) {
+        errorMessage = "You don't have permission to delete this indicator";
+      } else if (error.response?.status === 404) {
+        errorMessage = "Indicator not found";
+      } else if (error.response?.status === 400) {
+        errorMessage = error.response?.data?.detail || 
+                     error.response?.data?.error || 
+                     "Cannot delete indicator - it may be in use";
+      } else if (error.response?.status === 500) {
+        errorMessage = "Server error occurred while deleting indicator. This may be due to the indicator being referenced by other data (plans, reports, etc.). Please contact your administrator.";
+      } else {
+        errorMessage = 
+          error.response?.data?.detail ||
+          error.response?.data?.error ||
+          error.response?.data?.message ||
+          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+          error.message ||
+          "Failed to delete indicator";
+      }
+      
+      toast.error(errorMessage);
     },
   });
 
   const handleCreate = () => {
-    if (!formData.code || !formData.name || !formData.owner_unit_id) {
-      toast.error("Please fill in all required fields");
+    if (!formData.code || !formData.name || !formData.owner_unit_id || formData.owner_unit_id === 0) {
+      toast.error("Please fill in all required fields (code, name, and owner unit)");
       return;
     }
     createMutation.mutate(formData);
@@ -152,6 +203,50 @@ const Indicators = () => {
   const handleUpdate = () => {
     if (!editingIndicator) return;
     updateMutation.mutate({ id: editingIndicator.id, data: formData });
+  };
+
+  const handleDeleteClick = async (indicator: any) => {
+    setDeletingIndicator(indicator);
+    setCheckingUsage(true);
+    setDeleteDialogOpen(true);
+    
+    try {
+      const usage = await checkIndicatorUsage(indicator.id);
+      const dependencies: string[] = [];
+      
+      if (usage.usedInPlans > 0) {
+        dependencies.push(`Used in ${usage.usedInPlans} annual plan(s)`);
+      }
+      if (usage.usedInReports > 0) {
+        dependencies.push(`Used in ${usage.usedInReports} quarterly report(s)`);
+      }
+      if (usage.usedInPerformanceData > 0) {
+        dependencies.push(`Has ${usage.usedInPerformanceData} performance data entries`);
+      }
+      
+      setDeleteDependencies(dependencies);
+    } catch (error) {
+      console.error("Error checking indicator usage:", error);
+      // Continue with deletion dialog even if usage check fails
+      setDeleteDependencies([]);
+    } finally {
+      setCheckingUsage(false);
+    }
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deletingIndicator) {
+      deleteMutation.mutate(deletingIndicator.id);
+      setDeleteDialogOpen(false);
+      setDeletingIndicator(null);
+      setDeleteDependencies([]);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setDeletingIndicator(null);
+    setDeleteDependencies([]);
   };
 
   const canCreateIndicators = !!session?.user;
@@ -255,11 +350,8 @@ const Indicators = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
-                                  if (confirm("Are you sure you want to delete this indicator?")) {
-                                    deleteMutation.mutate(indicator.id);
-                                  }
-                                }}
+                                onClick={() => handleDeleteClick(indicator)}
+                                disabled={deleteMutation.isPending || checkingUsage}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -358,7 +450,10 @@ const Indicators = () => {
                   id="unit_of_measure"
                   value={formData.unit_of_measure}
                   onChange={(e) =>
-                    setFormData({ ...formData, unit_of_measure: e.target.value })
+                    setFormData({
+                      ...formData,
+                      unit_of_measure: e.target.value,
+                    })
                   }
                   placeholder="e.g., Percentage, Number, etc."
                 />
@@ -371,7 +466,10 @@ const Indicators = () => {
               >
                 Cancel
               </Button>
-              <Button onClick={handleCreate} disabled={createMutation.isPending}>
+              <Button
+                onClick={handleCreate}
+                disabled={createMutation.isPending}
+              >
                 {createMutation.isPending ? "Creating..." : "Create Indicator"}
               </Button>
             </DialogFooter>
@@ -379,7 +477,10 @@ const Indicators = () => {
         </Dialog>
 
         {/* Edit Indicator Dialog */}
-        <Dialog open={!!editingIndicator} onOpenChange={() => setEditingIndicator(null)}>
+        <Dialog
+          open={!!editingIndicator}
+          onOpenChange={() => setEditingIndicator(null)}
+        >
           <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle>Edit Indicator</DialogTitle>
@@ -425,13 +526,19 @@ const Indicators = () => {
                   id="edit_unit_of_measure"
                   value={formData.unit_of_measure}
                   onChange={(e) =>
-                    setFormData({ ...formData, unit_of_measure: e.target.value })
+                    setFormData({
+                      ...formData,
+                      unit_of_measure: e.target.value,
+                    })
                   }
                 />
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setEditingIndicator(null)}>
+              <Button
+                variant="outline"
+                onClick={() => setEditingIndicator(null)}
+              >
                 Cancel
               </Button>
               <Button
@@ -443,6 +550,19 @@ const Indicators = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <DeleteConfirmationDialog
+          isOpen={deleteDialogOpen}
+          onClose={handleDeleteCancel}
+          onConfirm={handleDeleteConfirm}
+          title="Delete Indicator"
+          description="Are you sure you want to delete this indicator? This action cannot be undone."
+          itemName={deletingIndicator ? `${deletingIndicator.code} - ${deletingIndicator.name}` : ""}
+          isLoading={deleteMutation.isPending}
+          dependencies={deleteDependencies}
+          warningMessage={deleteDependencies.length > 0 ? "Deleting this indicator may cause data integrity issues in related plans and reports." : undefined}
+        />
       </div>
     </DashboardLayout>
   );

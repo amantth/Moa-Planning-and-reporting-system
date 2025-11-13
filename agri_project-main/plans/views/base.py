@@ -7,6 +7,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 from ..models import UserProfile, WorkflowAudit
 
@@ -47,6 +49,7 @@ def log_workflow_action(user, unit, action, context_plan=None, context_report=No
     )
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class BaseViewSet(viewsets.ModelViewSet):
     """Base ViewSet with common functionality for all views."""
     permission_classes = [IsAuthenticated]

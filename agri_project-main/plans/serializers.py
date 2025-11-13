@@ -96,7 +96,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class IndicatorSerializer(serializers.ModelSerializer):
     """Indicator serializer with unit information."""
     owner_unit = UnitNestedSerializer(read_only=True)
-    owner_unit_id = serializers.IntegerField(write_only=True)
+    owner_unit_id = serializers.IntegerField(write_only=True, required=False)
     
     class Meta:
         model = Indicator
@@ -107,16 +107,13 @@ class IndicatorSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
     
     def create(self, validated_data):
-        # Handle owner_unit_id if provided (from frontend)
-        # Only convert if owner_unit is not already set by perform_create
-        if 'owner_unit_id' in validated_data and 'owner_unit' not in validated_data:
-            owner_unit_id = validated_data.pop('owner_unit_id')
-            validated_data['owner_unit'] = Unit.objects.get(id=owner_unit_id)
-        elif 'owner_unit_id' in validated_data:
-            # Remove owner_unit_id if owner_unit is already set
-            validated_data.pop('owner_unit_id')
+        # owner_unit_id is handled in perform_create in the view
+        # Remove it here to avoid conflicts
+        validated_data.pop('owner_unit_id', None)
         
-        return super().create(validated_data)
+        # owner_unit is passed from perform_create via serializer.save()
+        # It will be in validated_data when this method is called
+        return Indicator.objects.create(**validated_data)
     
     def update(self, instance, validated_data):
         if 'owner_unit_id' in validated_data:
@@ -172,7 +169,6 @@ class AnnualPlanSerializer(serializers.ModelSerializer):
     unit = UnitNestedSerializer(read_only=True)
     unit_id = serializers.IntegerField(write_only=True, required=False)
     created_by = UserSerializer(read_only=True)
-    created_by_id = serializers.IntegerField(write_only=True, required=False)
     approved_by = UserSerializer(read_only=True)
     targets = AnnualPlanTargetSerializer(many=True, read_only=True)
     targets_count = serializers.SerializerMethodField()
@@ -180,63 +176,47 @@ class AnnualPlanSerializer(serializers.ModelSerializer):
     can_submit = serializers.SerializerMethodField()
     can_approve = serializers.SerializerMethodField()
     is_within_entry_window = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = AnnualPlan
         fields = [
-            'id', 'year', 'unit', 'unit_id', 'status', 'created_by', 'created_by_id',
+            'id', 'year', 'unit', 'unit_id', 'status', 'created_by',
             'submitted_at', 'approved_by', 'approved_at', 'entry_window_start',
             'entry_window_end', 'targets', 'targets_count', 'can_edit', 'can_submit',
             'can_approve', 'is_within_entry_window'
         ]
-        read_only_fields = ['id', 'submitted_at', 'approved_at']
-    
+        read_only_fields = ['id', 'submitted_at', 'approved_at', 'created_by']
+
     def get_targets_count(self, obj):
         return obj.targets.count()
-    
+
     def get_can_edit(self, obj):
         return obj.status in ['DRAFT'] and obj.is_within_entry_window()
-    
+
     def get_can_submit(self, obj):
         return obj.status == 'DRAFT' and obj.targets.exists()
-    
+
     def get_can_approve(self, obj):
         # This would need to be determined by the requesting user's role
         return obj.status == 'SUBMITTED'
-    
+
     def get_is_within_entry_window(self, obj):
         return obj.is_within_entry_window()
-    
+
     def create(self, validated_data):
-        # Handle unit_id if provided (from frontend)
-        # Only convert if unit is not already set by perform_create
-        if 'unit_id' in validated_data and 'unit' not in validated_data:
-            unit_id = validated_data.pop('unit_id')
-            validated_data['unit'] = Unit.objects.get(id=unit_id)
-        elif 'unit_id' in validated_data:
-            # Remove unit_id if unit is already set
-            validated_data.pop('unit_id')
+        # unit_id is handled in perform_create in the view
+        # Remove it here to avoid conflicts
+        validated_data.pop('unit_id', None)
         
-        # Handle created_by_id if provided (from frontend)
-        # Only convert if created_by is not already set by perform_create
-        if 'created_by_id' in validated_data and 'created_by' not in validated_data:
-            created_by_id = validated_data.pop('created_by_id')
-            validated_data['created_by'] = User.objects.get(id=created_by_id)
-        elif 'created_by_id' in validated_data:
-            # Remove created_by_id if created_by is already set
-            validated_data.pop('created_by_id')
-        
-        return super().create(validated_data)
-    
+        # unit and created_by are passed from perform_create via serializer.save()
+        # They will be in validated_data when this method is called
+        return AnnualPlan.objects.create(**validated_data)
+
     def update(self, instance, validated_data):
         if 'unit_id' in validated_data:
             unit_id = validated_data.pop('unit_id')
             instance.unit = Unit.objects.get(id=unit_id)
-        
-        if 'created_by_id' in validated_data:
-            created_by_id = validated_data.pop('created_by_id')
-            instance.created_by = User.objects.get(id=created_by_id)
-        
+
         return super().update(instance, validated_data)
 
 
@@ -306,7 +286,6 @@ class QuarterlyReportSerializer(serializers.ModelSerializer):
     unit = UnitNestedSerializer(read_only=True)
     unit_id = serializers.IntegerField(write_only=True, required=False)
     created_by = UserSerializer(read_only=True)
-    created_by_id = serializers.IntegerField(write_only=True, required=False)
     approved_by = UserSerializer(read_only=True)
     entries = QuarterlyIndicatorEntrySerializer(many=True, read_only=True)
     entries_count = serializers.SerializerMethodField()
@@ -315,63 +294,48 @@ class QuarterlyReportSerializer(serializers.ModelSerializer):
     can_approve = serializers.SerializerMethodField()
     is_within_entry_window = serializers.SerializerMethodField()
     quarter_display = serializers.CharField(source='get_quarter_display', read_only=True)
-    
+
     class Meta:
         model = QuarterlyReport
         fields = [
             'id', 'year', 'quarter', 'quarter_display', 'unit', 'unit_id', 'status',
-            'created_by', 'created_by_id', 'submitted_at', 'approved_by', 'approved_at',
+            'created_by', 'submitted_at', 'approved_by', 'approved_at',
             'entry_window_start', 'entry_window_end', 'entries', 'entries_count',
             'can_edit', 'can_submit', 'can_approve', 'is_within_entry_window'
         ]
-        read_only_fields = ['id', 'submitted_at', 'approved_at']
-    
+        read_only_fields = ['id', 'submitted_at', 'approved_at', 'created_by']
+
     def get_entries_count(self, obj):
         return obj.entries.count()
-    
+
     def get_can_edit(self, obj):
         return obj.status in ['DRAFT'] and obj.is_within_entry_window()
-    
+
     def get_can_submit(self, obj):
         return obj.status == 'DRAFT' and obj.entries.exists()
-    
+
     def get_can_approve(self, obj):
         # This would need to be determined by the requesting user's role
         return obj.status == 'SUBMITTED'
-    
+
     def get_is_within_entry_window(self, obj):
         return obj.is_within_entry_window()
-    
+
     def create(self, validated_data):
-        # Handle unit_id if provided (from frontend)
-        # Only convert if unit is not already set by perform_create
-        if 'unit_id' in validated_data and 'unit' not in validated_data:
-            unit_id = validated_data.pop('unit_id')
-            validated_data['unit'] = Unit.objects.get(id=unit_id)
-        elif 'unit_id' in validated_data:
-            # Remove unit_id if unit is already set
-            validated_data.pop('unit_id')
-        
-        # Handle created_by_id if provided (from frontend)
-        # Only convert if created_by is not already set by perform_create
-        if 'created_by_id' in validated_data and 'created_by' not in validated_data:
-            created_by_id = validated_data.pop('created_by_id')
-            validated_data['created_by'] = User.objects.get(id=created_by_id)
-        elif 'created_by_id' in validated_data:
-            # Remove created_by_id if created_by is already set
-            validated_data.pop('created_by_id')
-        
-        return super().create(validated_data)
-    
+        # unit_id and created_by are set in perform_create in the view
+        unit_id = validated_data.pop('unit_id', None)
+
+        if unit_id:
+            unit = Unit.objects.get(id=unit_id)
+            validated_data['unit'] = unit
+
+        return QuarterlyReport.objects.create(**validated_data)
+
     def update(self, instance, validated_data):
         if 'unit_id' in validated_data:
             unit_id = validated_data.pop('unit_id')
             instance.unit = Unit.objects.get(id=unit_id)
-        
-        if 'created_by_id' in validated_data:
-            created_by_id = validated_data.pop('created_by_id')
-            instance.created_by = User.objects.get(id=created_by_id)
-        
+
         return super().update(instance, validated_data)
 
 

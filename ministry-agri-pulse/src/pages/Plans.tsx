@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
-import { getAnnualPlans, createAnnualPlan, submitAnnualPlan, approveAnnualPlan, rejectAnnualPlan, addAnnualPlanTarget, CreateAnnualPlanData, CreateAnnualPlanTargetData } from "@/services/plans-service";
+import { getAnnualPlans, createAnnualPlan, deleteAnnualPlan, submitAnnualPlan, approveAnnualPlan, rejectAnnualPlan, addAnnualPlanTarget, CreateAnnualPlanData, CreateAnnualPlanTargetData } from "@/services/plans-service";
 import { getUnits } from "@/services/units-service";
 import { getIndicators } from "@/services/indicators-service";
 import {
@@ -42,7 +42,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { format } from "date-fns";
-import { Plus, Send, Check, X, Target } from "lucide-react";
+import { Plus, Send, Check, X, Target, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const statusVariantMap: Record<
@@ -116,7 +116,13 @@ const Plans = () => {
       toast.success("Annual plan created successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to create annual plan");
+      const errorMessage = error.response?.data?.error || 
+                          error.response?.data?.detail ||
+                          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+                          error.message || 
+                          "Failed to create annual plan";
+      toast.error(errorMessage);
+      console.error("Create annual plan error:", error.response?.data || error);
     },
   });
 
@@ -169,26 +175,127 @@ const Plans = () => {
       toast.success("Target added successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to add target");
+      console.error("Add target error:", error);
+      console.error("Error response:", error.response);
+      console.error("Error status:", error.response?.status);
+      console.error("Error data:", error.response?.data);
+      
+      let errorMessage = "Failed to add target";
+      
+      if (error.name === 'ServerCrashError') {
+        errorMessage = "Server crashed while adding target. The backend returned an HTML error page, indicating a server-side issue. Please contact your administrator to check the server logs.";
+      } else if (error.name === 'AllTargetEndpointsFailed') {
+        errorMessage = "All target addition endpoints failed. The backend may not support adding targets to plans, or the API endpoints may be incorrect. Please contact your administrator.";
+      } else if (error.response?.status === 400) {
+        const errorData = error.response.data;
+        if (errorData.detail) {
+          errorMessage = errorData.detail;
+        } else if (errorData.error) {
+          errorMessage = errorData.error;
+        } else if (errorData.non_field_errors) {
+          errorMessage = errorData.non_field_errors[0];
+        } else if (typeof errorData === 'object') {
+          // Handle field-specific errors
+          const fieldErrors = Object.entries(errorData).map(([field, errors]) => {
+            const errorList = Array.isArray(errors) ? errors : [errors];
+            return `${field}: ${errorList.join(', ')}`;
+          });
+          errorMessage = fieldErrors.join('; ');
+        }
+      } else if (error.response?.status === 403) {
+        errorMessage = "You don't have permission to add targets to this plan. You can only add targets to your own draft plans or plans from your unit. Check if you're the plan creator or if the plan belongs to your organizational unit.";
+      } else if (error.response?.status === 404) {
+        errorMessage = "Plan not found or target addition endpoint not available";
+      } else if (error.response?.status === 500) {
+        // Check if it's an HTML response (server crash)
+        if (error.response?.data && typeof error.response.data === 'string' && 
+            error.response.data.includes('<!DOCTYPE html>')) {
+          errorMessage = "Server crashed while adding target. The backend returned an HTML error page instead of JSON. Please contact your administrator to check the server logs.";
+        } else {
+          errorMessage = "Server error occurred while adding target. This may be due to a backend issue or missing API endpoint. Please contact your administrator.";
+        }
+      } else {
+        errorMessage = error.response?.data?.error || error.message || "Failed to add target";
+      }
+      
+      toast.error(errorMessage, {
+        duration: 8000, // Show longer for complex error messages
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteAnnualPlan,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annual-plans"] });
+      toast.success("Annual plan deleted successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || "Failed to delete annual plan");
     },
   });
 
   const handleCreatePlan = () => {
-    if (!planFormData.unit_id) {
+    if (!planFormData.unit_id || planFormData.unit_id === 0) {
       toast.error("Please select a unit");
+      return;
+    }
+    if (!planFormData.year || planFormData.year === 0) {
+      toast.error("Please select a year");
       return;
     }
     createMutation.mutate(planFormData);
   };
 
   const handleAddTarget = () => {
-    if (!targetFormData.indicator_id || !targetFormData.target_value) {
-      toast.error("Please fill in all required fields");
+    console.log("Adding target with data:", targetFormData);
+    console.log("Selected plan:", selectedPlan);
+    console.log("Current user:", session?.user);
+    console.log("User permissions check:", {
+      canAddTargets: canAddTargets(selectedPlan),
+      userRole: session?.user?.role,
+      userId: session?.user?.id,
+      planCreatedBy: selectedPlan?.createdBy?.id,
+      userUnit: session?.user?.unit?.id,
+      planUnit: selectedPlan?.unit?.id,
+      planStatus: selectedPlan?.status
+    });
+    
+    // Check permissions before attempting to add target
+    if (!canAddTargets(selectedPlan)) {
+      toast.error("You don't have permission to add targets to this plan. You can only add targets to your own draft plans or plans from your unit.");
       return;
     }
+    
+    // Validate required fields
+    if (!targetFormData.indicator_id || targetFormData.indicator_id === 0) {
+      toast.error("Please select an indicator");
+      return;
+    }
+    
+    if (!targetFormData.target_value || targetFormData.target_value <= 0) {
+      toast.error("Please enter a valid target value greater than 0");
+      return;
+    }
+    
+    if (!selectedPlan || !selectedPlan.id) {
+      toast.error("No plan selected");
+      return;
+    }
+    
+    // Prepare the data to send
+    const dataToSend = {
+      ...targetFormData,
+      plan_id: selectedPlan.id, // Ensure plan_id is set correctly
+      target_value: Number(targetFormData.target_value),
+      baseline_value: Number(targetFormData.baseline_value) || 0,
+    };
+    
+    console.log("Sending target data:", dataToSend);
+    
     addTargetMutation.mutate({
       planId: selectedPlan.id,
-      data: targetFormData,
+      data: dataToSend,
     });
   };
 
@@ -206,6 +313,28 @@ const Plans = () => {
 
   const canCreatePlans = !!session?.user;
   const canApprove = session?.user?.role === "SUPERADMIN" || session?.user?.role === "STRATEGIC_AFFAIRS";
+  
+  // Check if user can add targets to a specific plan
+  const canAddTargets = (plan: any) => {
+    if (!session?.user) return false;
+    
+    // SUPERADMIN can add targets to any plan
+    if (session.user.role === "SUPERADMIN") return true;
+    
+    // STRATEGIC_AFFAIRS can add targets to any plan
+    if (session.user.role === "STRATEGIC_AFFAIRS") return true;
+    
+    // Plan must be in DRAFT status
+    if (plan.status !== "DRAFT") return false;
+    
+    // User can add targets to their own plans
+    if (plan.createdBy.id === session.user.id) return true;
+    
+    // User can add targets to plans from their unit (if they have the same unit)
+    if (session.user.unit && plan.unit && session.user.unit.id === plan.unit.id) return true;
+    
+    return false;
+  };
 
   return (
     <DashboardLayout>
@@ -295,16 +424,18 @@ const Plans = () => {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
+                            {canAddTargets(plan) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenTargetDialog(plan)}
+                                title="Add Target"
+                              >
+                                <Target className="h-4 w-4" />
+                              </Button>
+                            )}
                             {plan.status === "DRAFT" && (
                               <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleOpenTargetDialog(plan)}
-                                  title="Add Target"
-                                >
-                                  <Target className="h-4 w-4" />
-                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -312,6 +443,18 @@ const Plans = () => {
                                   title="Submit for Approval"
                                 >
                                   <Send className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (confirm("Are you sure you want to delete this annual plan?")) {
+                                      deleteMutation.mutate(plan.id);
+                                    }
+                                  }}
+                                  title="Delete Plan"
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-600" />
                                 </Button>
                               </>
                             )}
@@ -462,9 +605,12 @@ const Plans = () => {
                   id="target_value"
                   type="number"
                   step="0.01"
-                  value={targetFormData.target_value}
+                  value={targetFormData.target_value || ""}
                   onChange={(e) =>
-                    setTargetFormData({ ...targetFormData, target_value: Number(e.target.value) })
+                    setTargetFormData({ 
+                      ...targetFormData, 
+                      target_value: e.target.value === "" ? 0 : Number(e.target.value) || 0
+                    })
                   }
                 />
               </div>
@@ -474,9 +620,12 @@ const Plans = () => {
                   id="baseline_value"
                   type="number"
                   step="0.01"
-                  value={targetFormData.baseline_value}
+                  value={targetFormData.baseline_value || ""}
                   onChange={(e) =>
-                    setTargetFormData({ ...targetFormData, baseline_value: Number(e.target.value) })
+                    setTargetFormData({ 
+                      ...targetFormData, 
+                      baseline_value: e.target.value === "" ? 0 : Number(e.target.value) || 0
+                    })
                   }
                 />
               </div>

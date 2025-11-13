@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DashboardStats as DashboardStatsType } from "@/services/types";
-import { FileText, TrendingUp, Target, Users2 } from "lucide-react";
+import { FileText, TrendingUp, Target, CheckCircle, Clock, BarChart3 } from "lucide-react";
 
 interface DashboardStatsProps {
   stats?: DashboardStatsType | null;
@@ -23,14 +23,6 @@ const StatSkeleton = () => (
 const DashboardStats = ({ stats, isLoading }: DashboardStatsProps) => {
   const items = [
     {
-      title: "Total Units",
-      value: stats?.totalUnits ?? 0,
-      icon: Users2,
-      description: "Active ministerial offices",
-      color: "text-primary",
-      bgColor: "bg-primary/10",
-    },
-    {
       title: "Total Indicators",
       value: stats?.totalIndicators ?? 0,
       icon: Target,
@@ -39,25 +31,41 @@ const DashboardStats = ({ stats, isLoading }: DashboardStatsProps) => {
       bgColor: "bg-purple-100/60",
     },
     {
-      title: "Annual Plans (Current Year)",
-      value: stats?.annualPlansCurrent ?? 0,
+      title: "Submitted Plans",
+      value: stats?.submittedPlans ?? 0,
       icon: FileText,
-      description: "Plans submitted for this year",
+      description: "Annual plans submitted",
       color: "text-blue-600",
       bgColor: "bg-blue-100/60",
     },
     {
-      title: "Quarterly Reports (Current Quarter)",
-      value: stats?.quarterlyReportsCurrent ?? 0,
-      icon: TrendingUp,
-      description: "Reports submitted this quarter",
+      title: "Approved Plans",
+      value: stats?.approvedPlans ?? 0,
+      icon: CheckCircle,
+      description: "Plans approved and active",
+      color: "text-green-600",
+      bgColor: "bg-green-100/60",
+    },
+    {
+      title: "Pending Approvals",
+      value: stats?.pendingApprovals ?? 0,
+      icon: Clock,
+      description: "Plans awaiting approval",
+      color: "text-orange-600",
+      bgColor: "bg-orange-100/60",
+    },
+    {
+      title: "Quarterly Reports",
+      value: stats?.performanceReports ?? 0,
+      icon: BarChart3,
+      description: "Quarterly performance reports",
       color: "text-emerald-600",
       bgColor: "bg-emerald-100/60",
     },
   ];
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {isLoading
         ? items.map((_, index) => <StatSkeleton key={index} />)
         : items.map((stat) => (

@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.db import transaction
 
-from ..models import AnnualPlan, AnnualPlanTarget, Indicator, Unit
+from ..models import AnnualPlan, AnnualPlanTarget, Indicator
 from ..serializers import (
     AnnualPlanSerializer, AnnualPlanListSerializer, AnnualPlanTargetSerializer,
     AnnualPlanValidationSerializer, BulkApproveSerializer, BulkRejectSerializer
@@ -27,36 +27,65 @@ class AnnualPlanViewSet(BaseViewSet):
         
         queryset = AnnualPlan.objects.filter(year=year)
         
-        if profile.role != 'SUPERADMIN':
+        if profile and profile.role != 'SUPERADMIN':
             queryset = queryset.filter(unit=profile.unit)
         
         return queryset
     
     def perform_create(self, serializer):
         """Set unit and created_by automatically when creating."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        from django.db import IntegrityError
+        
         profile = get_user_profile(self.request.user)
         
-        # For non-superadmin users, always use their profile unit
-        # For superadmin users, use unit_id from request if provided, otherwise use profile unit
-        unit = profile.unit
-        if profile.role == 'SUPERADMIN' and 'unit_id' in self.request.data:
-            unit_id = self.request.data.get('unit_id')
+        if not profile:
+            raise PermissionDenied('User profile not found. Please contact administrator.')
+        
+        # Check if unit_id is provided in request data
+        unit_id = self.request.data.get('unit_id')
+        year = self.request.data.get('year')
+        
+        # Determine which unit to use
+        from ..models import Unit
+        target_unit = None
+        
+        if unit_id:
+            # Validate that user has permission to create plan for this unit
             try:
-                unit = Unit.objects.get(id=unit_id)
+                requested_unit = Unit.objects.get(id=unit_id)
+                if profile.role == 'SUPERADMIN' or requested_unit == profile.unit:
+                    target_unit = requested_unit
+                else:
+                    # User doesn't have permission, use their own unit
+                    target_unit = profile.unit
             except Unit.DoesNotExist:
-                pass  # Use profile unit as fallback
+                # Invalid unit_id, use user's unit
+                target_unit = profile.unit
+        else:
+            # No unit_id provided, use user's unit
+            target_unit = profile.unit
         
-        # Merge unit and created_by into validated_data before saving
-        # This ensures they're available when create() is called
-        if hasattr(serializer, 'validated_data'):
-            serializer.validated_data['unit'] = unit
-            serializer.validated_data['created_by'] = self.request.user
+        # Check if plan already exists for this year and unit
+        if year and target_unit:
+            if AnnualPlan.objects.filter(year=year, unit=target_unit).exists():
+                raise ValidationError({
+                    'non_field_errors': [f'An annual plan already exists for {target_unit.name} in {year}.']
+                })
         
-        serializer.save()
+        try:
+            serializer.save(unit=target_unit, created_by=self.request.user)
+        except IntegrityError as e:
+            # Handle unique constraint violation
+            if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+                raise ValidationError({
+                    'non_field_errors': [f'An annual plan already exists for this unit and year.']
+                })
+            raise
         
         # Log the action
         self.log_action(
-            unit,
+            serializer.instance.unit,
             'CREATE',
             context_plan=serializer.instance,
             message=f"Created annual plan for {serializer.instance.year}"
@@ -319,17 +348,19 @@ class AnnualPlanTargetViewSet(BaseViewSet):
     
     def perform_create(self, serializer):
         """Create target with validation."""
+        from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound
+        
         plan_id = self.request.data.get('plan_id')
         if not plan_id:
-            return Response({'error': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({'plan_id': 'plan_id is required'})
         
         try:
             plan = AnnualPlan.objects.get(id=plan_id)
             if not can_user_access_unit(self.request.user, plan.unit):
-                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+                raise PermissionDenied('Permission denied')
             
             if plan.status != 'DRAFT':
-                return Response({'error': 'Cannot add targets to submitted/approved plans'}, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError({'error': 'Cannot add targets to submitted/approved plans'})
             
             serializer.save(plan=plan)
             
@@ -341,18 +372,20 @@ class AnnualPlanTargetViewSet(BaseViewSet):
             )
             
         except AnnualPlan.DoesNotExist:
-            return Response({'error': 'Plan not found'}, status=status.HTTP_404_NOT_FOUND)
+            raise NotFound('Plan not found')
     
     def perform_update(self, serializer):
         """Update target with validation."""
+        from rest_framework.exceptions import ValidationError, PermissionDenied
+        
         target = self.get_object()
         plan = target.plan
         
         if not can_user_access_unit(self.request.user, plan.unit):
-            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            raise PermissionDenied('Permission denied')
         
         if plan.status != 'DRAFT':
-            return Response({'error': 'Cannot modify targets in submitted/approved plans'}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({'error': 'Cannot modify targets in submitted/approved plans'})
         
         serializer.save()
         

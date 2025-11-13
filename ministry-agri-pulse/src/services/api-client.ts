@@ -7,6 +7,9 @@ export const AUTH_TOKEN_KEY = "agri_app_auth_token";
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: false,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
 apiClient.interceptors.request.use((config) => {
@@ -14,6 +17,10 @@ apiClient.interceptors.request.use((config) => {
   if (token) {
     config.headers = config.headers ?? {};
     config.headers.Authorization = `Token ${token}`;
+  }
+  // Ensure Content-Type is set for all requests
+  if (!config.headers['Content-Type'] && !(config.data instanceof FormData)) {
+    config.headers['Content-Type'] = 'application/json';
   }
   return config;
 });

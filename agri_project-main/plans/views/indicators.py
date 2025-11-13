@@ -19,24 +19,66 @@ class IndicatorViewSet(BaseViewSet):
     def get_queryset(self):
         """Filter indicators based on user role."""
         profile = get_user_profile(self.request.user)
+        if not profile:
+            return Indicator.objects.none()
         if profile.role == 'SUPERADMIN':
             return Indicator.objects.all()
         return Indicator.objects.filter(owner_unit=profile.unit)
     
     def perform_create(self, serializer):
         """Set owner_unit automatically when creating."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        from django.db import IntegrityError
+        
         profile = get_user_profile(self.request.user)
         
-        # Merge owner_unit into validated_data before saving
-        # This ensures it's available when create() is called
-        if hasattr(serializer, 'validated_data'):
-            serializer.validated_data['owner_unit'] = profile.unit
+        if not profile:
+            raise PermissionDenied('User profile not found. Please contact administrator.')
         
-        serializer.save()
+        # Check if owner_unit_id is provided in request data
+        owner_unit_id = self.request.data.get('owner_unit_id')
+        code = self.request.data.get('code')
+        
+        # Determine which unit to use
+        from ..models import Unit
+        target_unit = None
+        
+        if owner_unit_id:
+            # Validate that user has permission to create indicator for this unit
+            try:
+                requested_unit = Unit.objects.get(id=owner_unit_id)
+                if profile.role == 'SUPERADMIN' or requested_unit == profile.unit:
+                    target_unit = requested_unit
+                else:
+                    # User doesn't have permission, use their own unit
+                    target_unit = profile.unit
+            except Unit.DoesNotExist:
+                # Invalid owner_unit_id, use user's unit
+                target_unit = profile.unit
+        else:
+            # No owner_unit_id provided, use user's unit
+            target_unit = profile.unit
+        
+        # Check if indicator code already exists for this unit
+        if code and target_unit:
+            if Indicator.objects.filter(code=code, owner_unit=target_unit).exists():
+                raise ValidationError({
+                    'code': [f'An indicator with code "{code}" already exists for this unit.']
+                })
+        
+        try:
+            serializer.save(owner_unit=target_unit)
+        except IntegrityError as e:
+            # Handle unique constraint violation
+            if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+                raise ValidationError({
+                    'code': [f'An indicator with this code already exists for this unit.']
+                })
+            raise
         
         # Log the action
         self.log_action(
-            profile.unit,
+            serializer.instance.owner_unit,
             'CREATE',
             message=f"Created indicator: {serializer.instance.code}"
         )

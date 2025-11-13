@@ -1,6 +1,4 @@
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.contrib.auth import get_user_model
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils import timezone
@@ -8,8 +6,6 @@ from .models import (
     Unit, UserProfile, Indicator, AnnualPlan, AnnualPlanTarget,
     QuarterlyReport, QuarterlyIndicatorEntry, ImportBatch, WorkflowAudit
 )
-
-User = get_user_model()
 
 # Register your models here.
 
@@ -29,44 +25,12 @@ class UnitAdmin(admin.ModelAdmin):
         return obj.users.count()
     users_count.short_description = 'Users'
 
-class UserProfileInline(admin.StackedInline):
-    """Inline admin for UserProfile in User admin."""
-    model = UserProfile
-    can_delete = False
-    verbose_name_plural = 'User Profile'
-    fk_name = 'user'
-    fields = ['role', 'unit']
-    extra = 1
-
-
-class CustomUserAdmin(BaseUserAdmin):
-    """Custom User admin with UserProfile inline."""
-    inlines = [UserProfileInline]
-    list_display = BaseUserAdmin.list_display + ('has_profile',)
-    
-    def has_profile(self, obj):
-        """Check if user has a profile."""
-        return hasattr(obj, 'profile')
-    has_profile.boolean = True
-    has_profile.short_description = 'Has Profile'
-
-
-# Unregister default User admin and register custom one
-admin.site.unregister(User)
-admin.site.register(User, CustomUserAdmin)
-
-
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'role', 'unit', 'user_email']
+    list_display = ['user', 'role', 'unit']
     list_filter = ['role', 'unit__type']
     search_fields = ['user__username', 'user__email', 'unit__name']
     raw_id_fields = ['user', 'unit']
-    
-    def user_email(self, obj):
-        """Display user email."""
-        return obj.user.email
-    user_email.short_description = 'Email'
 
 @admin.register(Indicator)
 class IndicatorAdmin(admin.ModelAdmin):

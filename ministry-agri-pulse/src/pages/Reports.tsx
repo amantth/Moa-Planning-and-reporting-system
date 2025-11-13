@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
-import { getQuarterlyReports, createQuarterlyReport, submitQuarterlyReport, approveQuarterlyReport, rejectQuarterlyReport, addQuarterlyEntry, CreateQuarterlyReportData, CreateQuarterlyEntryData } from "@/services/reports-service";
+import { getQuarterlyReports, createQuarterlyReport, deleteQuarterlyReport, submitQuarterlyReport, approveQuarterlyReport, rejectQuarterlyReport, addQuarterlyEntry, CreateQuarterlyReportData, CreateQuarterlyEntryData } from "@/services/reports-service";
 import { getUnits } from "@/services/units-service";
 import { getIndicators } from "@/services/indicators-service";
 import {
@@ -42,7 +42,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { format } from "date-fns";
-import { Plus, Send, Check, X, FileText } from "lucide-react";
+import { Plus, Send, Check, X, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const statusVariantMap: Record<
@@ -185,6 +185,17 @@ const Reports = () => {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: deleteQuarterlyReport,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["quarterly-reports"] });
+      toast.success("Quarterly report deleted successfully");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || "Failed to delete quarterly report");
+    },
+  });
+
   const handleCreateReport = () => {
     if (!reportFormData.unit_id) {
       toast.error("Please select a unit");
@@ -224,7 +235,7 @@ const Reports = () => {
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">
-              Performance Reports
+              Quarterly Reports
             </h1>
             <p className="text-muted-foreground mt-1">
               Monitor quarterly performance submissions and approval status.
@@ -344,6 +355,18 @@ const Reports = () => {
                                   title="Submit for Approval"
                                 >
                                   <Send className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (confirm("Are you sure you want to delete this quarterly report?")) {
+                                      deleteMutation.mutate(report.id);
+                                    }
+                                  }}
+                                  title="Delete Report"
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-600" />
                                 </Button>
                               </>
                             )}

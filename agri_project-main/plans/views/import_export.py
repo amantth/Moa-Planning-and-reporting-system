@@ -6,102 +6,221 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
 from django.http import HttpResponse
+from django.db import transaction
 import csv
+import pandas as pd
+import io
 
-from ..models import ImportBatch, AnnualPlan, QuarterlyReport, Indicator, WorkflowAudit, Unit
+from ..models import ImportBatch, AnnualPlan, QuarterlyReport, Indicator, WorkflowAudit, Unit, AnnualPlanTarget, QuarterlyIndicatorEntry
 from ..serializers import ImportBatchSerializer
-from .base import BaseViewSet, get_user_profile, can_user_access_unit
+from .base import BaseViewSet, get_user_profile
 
 
 class ImportExportViewSet(BaseViewSet):
     """Import/Export API endpoints."""
     queryset = ImportBatch.objects.all()
     serializer_class = ImportBatchSerializer
+    permission_classes = []  # Allow any authenticated user
     
     def get_queryset(self):
         """Filter imports based on user access."""
+        # Handle anonymous users
+        if not self.request.user.is_authenticated:
+            return ImportBatch.objects.none()
+            
         profile = get_user_profile(self.request.user)
+        
+        # Handle case where profile doesn't exist
+        if not profile:
+            return ImportBatch.objects.all()
         
         if profile.role == 'SUPERADMIN':
             return ImportBatch.objects.all()
         else:
             return ImportBatch.objects.filter(unit=profile.unit)
     
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], url_path='import_data')
     def import_data(self, request):
-        """Handle Excel import for plans and reports."""
+        """Handle Excel/CSV import for plans and reports."""
+        # Handle anonymous users
+        if not self.request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required.'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+            
         profile = get_user_profile(request.user)
+        if not profile:
+            return Response({
+                'error': 'User profile not found.'
+            }, status=status.HTTP_403_FORBIDDEN)
         
-        if 'file' not in request.FILES:
-            return Response(
-                {'error': 'No file provided'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        file = request.FILES['file']
-        source = request.data.get('source', 'ANNUAL')
+        # Get parameters
+        file_obj = request.FILES.get('file')
+        source = request.data.get('source', 'ANNUAL')  # ANNUAL or QUARTERLY
         unit_id = request.data.get('unit_id')
         year = request.data.get('year')
         quarter = request.data.get('quarter')
         
-        if not all([unit_id, year]):
-            return Response(
-                {'error': 'Missing required fields: unit_id, year'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Validate inputs
+        if not file_obj:
+            return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
         
-        if source == 'QUARTERLY' and not quarter:
-            return Response(
-                {'error': 'Quarter is required for quarterly reports'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if not unit_id:
+            return Response({'error': 'Unit ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not year:
+            return Response({'error': 'Year is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             unit = Unit.objects.get(id=unit_id)
-            if not can_user_access_unit(request.user, unit):
-                return Response(
-                    {'error': 'Permission denied'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
         except Unit.DoesNotExist:
-            return Response(
-                {'error': 'Invalid unit_id'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Unit not found'}, status=status.HTTP_404_NOT_FOUND)
         
-        # Create import batch record
-        import_batch = ImportBatch.objects.create(
-            source=source,
-            file=file,
-            unit=unit,
-            year=int(year),
-            quarter=int(quarter) if quarter else None,
-            uploaded_by=request.user,
-            notes=f'Uploaded via web interface'
-        )
+        # Check permissions
+        if profile.role != 'SUPERADMIN' and profile.unit != unit:
+            return Response({'error': 'You do not have permission to import data for this unit'}, 
+                          status=status.HTTP_403_FORBIDDEN)
         
-        # Basic file validation - actual processing would go here
-        # For now, we'll just record the upload
-        import_batch.records_inserted = 0
-        import_batch.records_updated = 0
-        import_batch.save()
-        
-        # Log the action
-        from .base import log_workflow_action
-        log_workflow_action(
-            request.user,
-            unit,
-            'IMPORT',
-            message=f"Uploaded {source} data for year {year}"
-        )
-        
-        return Response({
-            'message': 'File uploaded successfully. Processing will be implemented.',
-            'batch_id': import_batch.id,
-            'status': 'uploaded'
-        }, status=status.HTTP_201_CREATED)
+        try:
+            # Read the file
+            file_extension = file_obj.name.split('.')[-1].lower()
+            
+            if file_extension in ['xlsx', 'xls']:
+                df = pd.read_excel(file_obj)
+            elif file_extension == 'csv':
+                df = pd.read_csv(file_obj)
+            else:
+                return Response({'error': 'Unsupported file format. Please upload .xlsx, .xls, or .csv'}, 
+                              status=status.HTTP_400_BAD_REQUEST)
+            
+            # Process the data based on source type
+            with transaction.atomic():
+                if source == 'ANNUAL':
+                    result = self._process_annual_plan(df, unit, year, request.user)
+                elif source == 'QUARTERLY':
+                    if not quarter:
+                        return Response({'error': 'Quarter is required for quarterly reports'}, 
+                                      status=status.HTTP_400_BAD_REQUEST)
+                    result = self._process_quarterly_report(df, unit, year, quarter, request.user)
+                else:
+                    return Response({'error': 'Invalid source type'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Create import batch record
+                import_batch = ImportBatch.objects.create(
+                    unit=unit,
+                    uploaded_by=request.user,
+                    file_name=file_obj.name,
+                    source=source,
+                    status='COMPLETED',
+                    records_processed=result.get('processed', 0),
+                    records_failed=result.get('failed', 0)
+                )
+                
+                return Response({
+                    'message': 'Import completed successfully',
+                    'processed': result.get('processed', 0),
+                    'failed': result.get('failed', 0),
+                    'errors': result.get('errors', [])
+                }, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            return Response({
+                'error': f'Import failed: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=False, methods=['get'])
+    def _process_annual_plan(self, df, unit, year, user):
+        """Process annual plan data from DataFrame."""
+        processed = 0
+        failed = 0
+        errors = []
+        
+        # Get or create annual plan
+        annual_plan, created = AnnualPlan.objects.get_or_create(
+            unit=unit,
+            year=year,
+            defaults={'created_by': user, 'status': 'DRAFT'}
+        )
+        
+        # Expected columns: indicator_code, target_value, baseline_value, remarks
+        for index, row in df.iterrows():
+            try:
+                indicator_code = str(row.get('indicator_code', '')).strip()
+                if not indicator_code:
+                    continue
+                
+                # Find indicator
+                try:
+                    indicator = Indicator.objects.get(code=indicator_code)
+                except Indicator.DoesNotExist:
+                    errors.append(f"Row {index + 2}: Indicator '{indicator_code}' not found")
+                    failed += 1
+                    continue
+                
+                # Create or update target
+                target, created = AnnualPlanTarget.objects.update_or_create(
+                    annual_plan=annual_plan,
+                    indicator=indicator,
+                    defaults={
+                        'target_value': float(row.get('target_value', 0)),
+                        'baseline_value': float(row.get('baseline_value', 0)),
+                        'remarks': str(row.get('remarks', ''))
+                    }
+                )
+                processed += 1
+                
+            except Exception as e:
+                errors.append(f"Row {index + 2}: {str(e)}")
+                failed += 1
+        
+        return {'processed': processed, 'failed': failed, 'errors': errors}
+    
+    def _process_quarterly_report(self, df, unit, year, quarter, user):
+        """Process quarterly report data from DataFrame."""
+        processed = 0
+        failed = 0
+        errors = []
+        
+        # Get or create quarterly report
+        quarterly_report, created = QuarterlyReport.objects.get_or_create(
+            unit=unit,
+            year=year,
+            quarter=quarter,
+            defaults={'created_by': user, 'status': 'DRAFT'}
+        )
+        
+        # Expected columns: indicator_code, achieved_value, remarks
+        for index, row in df.iterrows():
+            try:
+                indicator_code = str(row.get('indicator_code', '')).strip()
+                if not indicator_code:
+                    continue
+                
+                # Find indicator
+                try:
+                    indicator = Indicator.objects.get(code=indicator_code)
+                except Indicator.DoesNotExist:
+                    errors.append(f"Row {index + 2}: Indicator '{indicator_code}' not found")
+                    failed += 1
+                    continue
+                
+                # Create or update entry
+                entry, created = QuarterlyIndicatorEntry.objects.update_or_create(
+                    quarterly_report=quarterly_report,
+                    indicator=indicator,
+                    defaults={
+                        'achieved_value': float(row.get('achieved_value', 0)),
+                        'remarks': str(row.get('remarks', ''))
+                    }
+                )
+                processed += 1
+                
+            except Exception as e:
+                errors.append(f"Row {index + 2}: {str(e)}")
+                failed += 1
+        
+        return {'processed': processed, 'failed': failed, 'errors': errors}
+    
+    @action(detail=False, methods=['get'], url_path='export_options')
     def export_options(self, request):
         """Get available export options."""
         return Response({
@@ -127,7 +246,7 @@ class ImportExportViewSet(BaseViewSet):
             }
         })
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='export_annual_plans')
     def export_annual_plans(self, request):
         """Export all annual plans for a year."""
         profile = get_user_profile(request.user)
@@ -167,7 +286,7 @@ class ImportExportViewSet(BaseViewSet):
         
         return response
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='export_quarterly_reports')
     def export_quarterly_reports(self, request):
         """Export quarterly reports for a year/quarter."""
         profile = get_user_profile(request.user)
@@ -215,7 +334,7 @@ class ImportExportViewSet(BaseViewSet):
         
         return response
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='export_indicators')
     def export_indicators(self, request):
         """Export all indicators."""
         profile = get_user_profile(request.user)
@@ -252,7 +371,7 @@ class ImportExportViewSet(BaseViewSet):
         
         return response
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='export_audit_log')
     def export_audit_log(self, request):
         """Export audit log."""
         profile = get_user_profile(request.user)
@@ -290,7 +409,7 @@ class ImportExportViewSet(BaseViewSet):
         
         return response
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='recent_imports')
     def recent_imports(self, request):
         """Get recent imports for the user's unit."""
         profile = get_user_profile(request.user)

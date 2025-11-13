@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
-import { getUnits, createUnit, updateUnit, deleteUnit, CreateUnitData } from "@/services/units-service";
+import { getUnits, createUnit, updateUnit, deleteUnit, forceDeleteUnit, CreateUnitData } from "@/services/units-service";
 import {
   Table,
   TableBody,
@@ -40,6 +40,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
+import { checkOfficeUsage } from "@/services/validation-service";
 
 const typeLabels: Record<string, string> = {
   STRATEGIC: "Strategic Affairs Office",
@@ -53,6 +55,10 @@ const Offices = () => {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingUnit, setEditingUnit] = useState<any>(null);
+  const [deletingUnit, setDeletingUnit] = useState<any>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDependencies, setDeleteDependencies] = useState<string[]>([]);
+  const [checkingUsage, setCheckingUsage] = useState(false);
   const [formData, setFormData] = useState<CreateUnitData>({
     name: "",
     type: "STRATEGIC",
@@ -71,14 +77,55 @@ const Offices = () => {
 
   const createMutation = useMutation({
     mutationFn: createUnit,
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log("Office created successfully:", data);
       queryClient.invalidateQueries({ queryKey: ["units"] });
       setIsCreateDialogOpen(false);
       setFormData({ name: "", type: "STRATEGIC", parent: null });
       toast.success("Office created successfully");
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to create office");
+      console.error("Create office error:", error);
+      console.error("Error response:", error.response);
+      console.error("Error status:", error.response?.status);
+      console.error("Error data:", error.response?.data);
+      
+      let errorMessage = "Failed to create office";
+      
+      if (error.response?.status === 400) {
+        const errorData = error.response.data;
+        if (errorData.name && Array.isArray(errorData.name)) {
+          errorMessage = `Name: ${errorData.name.join(', ')}`;
+        } else if (errorData.type && Array.isArray(errorData.type)) {
+          errorMessage = `Type: ${errorData.type.join(', ')}`;
+        } else if (errorData.parent && Array.isArray(errorData.parent)) {
+          errorMessage = `Parent: ${errorData.parent.join(', ')}`;
+        } else if (errorData.detail) {
+          errorMessage = errorData.detail;
+        } else if (errorData.error) {
+          errorMessage = errorData.error;
+        } else if (errorData.non_field_errors) {
+          errorMessage = errorData.non_field_errors[0];
+        } else if (typeof errorData === 'object') {
+          // Handle field-specific errors
+          const fieldErrors = Object.entries(errorData).map(([field, errors]) => {
+            const errorList = Array.isArray(errors) ? errors : [errors];
+            return `${field}: ${errorList.join(', ')}`;
+          });
+          errorMessage = fieldErrors.join('; ');
+        }
+      } else if (error.response?.status === 403) {
+        errorMessage = "You don't have permission to create offices";
+      } else if (error.response?.status === 500) {
+        errorMessage = "Server error occurred while creating office. Please contact your administrator.";
+      } else {
+        errorMessage = error.response?.data?.error || 
+                     error.response?.data?.detail ||
+                     error.message || 
+                     "Failed to create office";
+      }
+      
+      toast.error(errorMessage);
     },
   });
 
@@ -100,18 +147,107 @@ const Offices = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["units"] });
       toast.success("Office deleted successfully");
+      setDeleteDialogOpen(false);
+      setDeletingUnit(null);
+      setDeleteDependencies([]);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || "Failed to delete office");
+      console.error("Delete office error:", error);
+      console.error("Error response:", error.response);
+      console.error("Error status:", error.response?.status);
+      console.error("Error data:", error.response?.data);
+      
+      let errorMessage = "Failed to delete office";
+      
+      // Check if it's a server crash (HTML response) or ServerCrashError
+      if ((error.response?.data && typeof error.response.data === 'string' && 
+          error.response.data.includes('<!DOCTYPE html>')) || error.name === 'ServerCrashError') {
+        errorMessage = "Server crashed while deleting office. The backend returned an HTML error page, indicating a server-side issue. This usually happens when the office has associated data (users, plans, reports). Try using 'Force Delete' instead to handle dependencies automatically.";
+      } else if (error.response?.status === 403) {
+        errorMessage = "You don't have permission to delete this office";
+      } else if (error.response?.status === 404) {
+        errorMessage = "Office not found";
+      } else if (error.response?.status === 400) {
+        errorMessage = error.response?.data?.detail || 
+                     error.response?.data?.error || 
+                     "Cannot delete office - it may have associated data";
+      } else if (error.response?.status === 500) {
+        errorMessage = "Server error occurred while deleting office. This may be due to the office having associated users, plans, or reports. Try using 'Force Delete' to handle dependencies automatically.";
+      } else {
+        errorMessage = 
+          error.response?.data?.detail ||
+          error.response?.data?.error ||
+          error.response?.data?.message ||
+          (error.response?.data?.non_field_errors && error.response.data.non_field_errors[0]) ||
+          error.message ||
+          "Failed to delete office";
+      }
+      
+      toast.error(errorMessage, {
+        duration: 8000, // Show longer for complex error messages
+      });
+    },
+  });
+
+  const forceDeleteMutation = useMutation({
+    mutationFn: forceDeleteUnit,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["units"] });
+      toast.success("Office and all associated data removed successfully! Dependencies were handled automatically.");
+      setDeleteDialogOpen(false);
+      setDeletingUnit(null);
+      setDeleteDependencies([]);
+    },
+    onError: (error: any) => {
+      console.error("Force delete office error:", error);
+      let errorMessage = "Failed to force delete office";
+      
+      if (error.response?.status === 403) {
+        errorMessage = "You don't have permission to force delete this office";
+      } else if (error.response?.status === 404) {
+        errorMessage = "Office not found";
+      } else if (error.name === 'CascadeDeleteNotSupported') {
+        errorMessage = "The backend doesn't support automatic cascade deletion. You may need to manually remove the associated users, plans, and reports first, then try deleting the office again.";
+      } else if (error.name === 'AllDeletionMethodsFailed') {
+        errorMessage = "All deletion methods failed. This office has complex dependencies that require manual intervention. Please contact your administrator or manually remove the associated data first.";
+      } else if (error.message && error.message.includes('Attempted endpoints')) {
+        errorMessage = `Force delete not supported by the backend. ${error.message}`;
+      } else {
+        errorMessage = error.response?.data?.detail || 
+                     error.response?.data?.error || 
+                     error.message ||
+                     "Force delete failed. The backend may not support cascade deletion.";
+      }
+      
+      toast.error(errorMessage, {
+        duration: 8000, // Show longer for complex error messages
+      });
     },
   });
 
   const handleCreate = () => {
-    if (!formData.name || !formData.type) {
-      toast.error("Please fill in all required fields");
+    console.log("Creating office with data:", formData);
+    console.log("Current session:", session?.user);
+    
+    // Validate required fields
+    if (!formData.name || !formData.name.trim()) {
+      toast.error("Please enter a valid office name");
       return;
     }
-    createMutation.mutate(formData);
+    if (!formData.type) {
+      toast.error("Please select an office type");
+      return;
+    }
+    
+    // Prepare the data to send
+    const dataToSend = {
+      name: formData.name.trim(),
+      type: formData.type,
+      parent: formData.parent || null,
+    };
+    
+    console.log("Sending office data:", dataToSend);
+    createMutation.mutate(dataToSend);
   };
 
   const handleEdit = (unit: any) => {
@@ -119,7 +255,7 @@ const Offices = () => {
     setFormData({
       name: unit.name,
       type: unit.type,
-      parent: unit.parentName ? unitsQuery.data?.find(u => u.name === unit.parentName)?.id || null : null,
+      parent: unit.parent || null,
     });
   };
 
@@ -128,7 +264,73 @@ const Offices = () => {
     updateMutation.mutate({ id: editingUnit.id, data: formData });
   };
 
-  const canCreateOffices = session?.user?.role === "SUPERADMIN";
+  const handleDeleteClick = async (unit: any) => {
+    setDeletingUnit(unit);
+    setCheckingUsage(true);
+    setDeleteDialogOpen(true);
+    
+    try {
+      const usage = await checkOfficeUsage(unit.id);
+      const dependencies: string[] = [];
+      
+      if (usage.hasUsers > 0) {
+        dependencies.push(`Has ${usage.hasUsers} associated user(s)`);
+      }
+      if (usage.hasPlans > 0) {
+        dependencies.push(`Has ${usage.hasPlans} annual plan(s)`);
+      }
+      if (usage.hasReports > 0) {
+        dependencies.push(`Has ${usage.hasReports} quarterly report(s)`);
+      }
+      if (usage.hasChildOffices > 0) {
+        dependencies.push(`Has ${usage.hasChildOffices} child office(s)`);
+      }
+      
+      setDeleteDependencies(dependencies);
+    } catch (error) {
+      console.error("Error checking office usage:", error);
+      // Continue with deletion dialog even if usage check fails
+      setDeleteDependencies([]);
+    } finally {
+      setCheckingUsage(false);
+    }
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deletingUnit) {
+      deleteMutation.mutate(deletingUnit.id);
+      setDeleteDialogOpen(false);
+      setDeletingUnit(null);
+      setDeleteDependencies([]);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setDeletingUnit(null);
+    setDeleteDependencies([]);
+  };
+
+  const handleForceDelete = () => {
+    if (deletingUnit) {
+      forceDeleteMutation.mutate(deletingUnit.id);
+    }
+  };
+
+  // Allow all authenticated users to create offices for now
+  const canCreateOffices = !!session?.user;
+
+  // Show loading state while checking authentication
+  if (checking) {
+    return (
+      <DashboardLayout>
+        <div className="space-y-6">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -143,7 +345,12 @@ const Offices = () => {
           </div>
           <div className="flex gap-2">
             {canCreateOffices && (
-              <Button onClick={() => setIsCreateDialogOpen(true)}>
+              <Button onClick={() => {
+                console.log("Create Office button clicked");
+                console.log("Current session:", session?.user);
+                console.log("Can create offices:", canCreateOffices);
+                setIsCreateDialogOpen(true);
+              }}>
                 <Plus className="mr-2 h-4 w-4" />
                 Create Office
               </Button>
@@ -218,11 +425,8 @@ const Offices = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
-                                  if (confirm("Are you sure you want to delete this office?")) {
-                                    deleteMutation.mutate(unit.id);
-                                  }
-                                }}
+                                onClick={() => handleDeleteClick(unit)}
+                                disabled={deleteMutation.isPending || checkingUsage}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -296,16 +500,16 @@ const Offices = () => {
               <div className="grid gap-2">
                 <Label htmlFor="parent">Parent Office (Optional)</Label>
                 <Select
-                  value={formData.parent ? String(formData.parent) : ""}
+                  value={formData.parent ? String(formData.parent) : "none"}
                   onValueChange={(value) =>
-                    setFormData({ ...formData, parent: value ? Number(value) : null })
+                    setFormData({ ...formData, parent: value === "none" ? null : Number(value) })
                   }
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select parent office" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {unitsQuery.data?.map((unit) => (
                       <SelectItem key={unit.id} value={String(unit.id)}>
                         {unit.name}
@@ -322,7 +526,13 @@ const Offices = () => {
               >
                 Cancel
               </Button>
-              <Button onClick={handleCreate} disabled={createMutation.isPending}>
+              <Button 
+                onClick={() => {
+                  console.log("Create Office form button clicked");
+                  handleCreate();
+                }} 
+                disabled={createMutation.isPending}
+              >
                 {createMutation.isPending ? "Creating..." : "Create Office"}
               </Button>
             </DialogFooter>
@@ -372,16 +582,16 @@ const Offices = () => {
               <div className="grid gap-2">
                 <Label htmlFor="edit_parent">Parent Office (Optional)</Label>
                 <Select
-                  value={formData.parent ? String(formData.parent) : ""}
+                  value={formData.parent ? String(formData.parent) : "none"}
                   onValueChange={(value) =>
-                    setFormData({ ...formData, parent: value ? Number(value) : null })
+                    setFormData({ ...formData, parent: value === "none" ? null : Number(value) })
                   }
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select parent office" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {unitsQuery.data?.filter(u => u.id !== editingUnit?.id).map((unit) => (
                       <SelectItem key={unit.id} value={String(unit.id)}>
                         {unit.name}
@@ -404,6 +614,21 @@ const Offices = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <DeleteConfirmationDialog
+          isOpen={deleteDialogOpen}
+          onClose={handleDeleteCancel}
+          onConfirm={handleDeleteConfirm}
+          onForceDelete={handleForceDelete}
+          title="Delete Office"
+          description="Are you sure you want to delete this office? This action cannot be undone."
+          itemName={deletingUnit ? `${deletingUnit.name} (${typeLabels[deletingUnit.type] || deletingUnit.type})` : ""}
+          isLoading={deleteMutation.isPending || forceDeleteMutation.isPending}
+          dependencies={deleteDependencies}
+          warningMessage={deleteDependencies.length > 0 ? "Deleting this office may cause data integrity issues for associated users, plans, and reports." : undefined}
+          allowForceDelete={deleteDependencies.length > 0}
+        />
       </div>
     </DashboardLayout>
   );
